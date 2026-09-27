@@ -55,8 +55,21 @@ warden schedule add nightly --kind sweep --frequency daily --at 03:00
 warden schedule list                 # your recurring scans
 warden schedule remove nightly
 
+warden gui                           # open the web dashboard (localhost only)
+
 warden update-rules                  # how to add YARA rules & hash feeds
 ```
+
+## Dashboard
+
+`warden gui` launches a local web dashboard (bound to `127.0.0.1`, protected by a
+per-session token) for people who'd rather not live in the terminal: run scans
+and sweeps with live progress, expand each flagged file's findings, one-click
+quarantine, and browse history and quarantined items. It's built to **WCAG 2.1
+AA** — full keyboard navigation, visible focus, ARIA tabs/dialog/live-regions,
+`prefers-reduced-motion`, and a **light / dark / system** theme toggle that
+remembers your choice. No Electron, no extra dependencies — just the standard
+library.
 
 `warden scan` exits **1** if any Medium+ threat is found, **0** if clean — handy for scripts and scheduled runs.
 
@@ -87,7 +100,7 @@ For the full ClamAV signature set: install ClamAV, run `freshclam`, and Warden p
 - [x] Safe, reversible quarantine
 - [x] **System sweep** — auto-scan the high-value spots (startup/autoruns, scheduled tasks, Temp, Downloads, running processes; flags unsigned executables in user-writable locations)
 - [x] **Scheduled scans** (Windows Task Scheduler / cron integration) with saved history
-- [ ] **GUI dashboard** — results, threats, history, one-click quarantine (WCAG 2.1 AA, light/dark)
+- [x] **GUI dashboard** — results, threats, history, one-click quarantine (WCAG 2.1 AA, light/dark)
 - [ ] Standalone Windows/Linux/macOS binaries on the Releases page
 - [ ] Opt-in online hash reputation lookup
 

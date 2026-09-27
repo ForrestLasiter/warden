@@ -30,7 +30,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui = ["pywebview>=5.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
@@ -44,4 +43,4 @@ Issues = "https://github.com/ForrestLasiter/warden/issues"
 include = ["warden*"]
 
 [tool.setuptools.package-data]
-warden = ["rules/*.yar", "rules/*.yara"]
+warden = ["rules/*.yar", "rules/*.yara", "gui/static/*"]

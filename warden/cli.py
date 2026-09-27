@@ -327,6 +327,20 @@ def quarantine_delete(
     console.print(f"[green]Deleted[/] {entry_id}")
 
 
+@app.command()
+def gui(
+    port: int = typer.Option(8787, "--port", help="Port to serve on (localhost only)."),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open a browser."),
+):
+    """Launch the local web dashboard (scan, sweep, history, quarantine)."""
+    from .gui import serve
+    try:
+        serve(port=port, open_browser=not no_open)
+    except OSError as exc:
+        console.print(f"[red]Could not start dashboard on port {port}:[/] {exc}")
+        raise typer.Exit(1)
+
+
 @app.command("update-rules")
 def update_rules():
     """Explain how to add YARA rules and hash feeds."""

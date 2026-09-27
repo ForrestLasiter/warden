@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warden — malware scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script>window.WARDEN_TOKEN = "__WARDEN_TOKEN__";</script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar" id="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">🛡️</span>
+      <span class="brand-name">Warden</span>
+      <span class="brand-tag">malware scanner</span>
+    </div>
+    <div class="topbar-right">
+      <p class="engine-status" id="engineStatus" aria-live="polite">Checking engines…</p>
+      <div class="theme-switch" role="group" aria-label="Color theme">
+        <button type="button" class="theme-btn" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" class="theme-btn" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        <button type="button" class="theme-btn" data-theme-choice="system" aria-pressed="true">System</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs" aria-label="Sections">
+    <div role="tablist" aria-label="Warden sections" id="tablist">
+      <button role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan" tabindex="0">Scan</button>
+      <button role="tab" id="tab-sweep" aria-selected="false" aria-controls="panel-sweep" tabindex="-1">System sweep</button>
+      <button role="tab" id="tab-history" aria-selected="false" aria-controls="panel-history" tabindex="-1">History</button>
+      <button role="tab" id="tab-quarantine" aria-selected="false" aria-controls="panel-quarantine" tabindex="-1">Quarantine</button>
+    </div>
+  </nav>
+
+  <main id="main" tabindex="-1">
+    <!-- SCAN -->
+    <section role="tabpanel" id="panel-scan" aria-labelledby="tab-scan" tabindex="0">
+      <h1>Scan a file or folder</h1>
+      <form id="scanForm" class="controls">
+        <div class="field field-grow">
+          <label for="scanPath">Path to scan</label>
+          <input type="text" id="scanPath" name="path" autocomplete="off" spellcheck="false"
+                 placeholder="e.g. C:\Users\you\Downloads" required>
+        </div>
+        <div class="field">
+          <label for="scanSeverity">Report level</label>
+          <select id="scanSeverity" name="min_severity">
+            <option value="info">Info and up</option>
+            <option value="low" selected>Low and up</option>
+            <option value="medium">Medium and up</option>
+            <option value="high">High and up</option>
+          </select>
+        </div>
+        <div class="field field-end">
+          <button type="submit" class="btn btn-primary" id="scanBtn">Start scan</button>
+        </div>
+      </form>
+      <div id="scanProgress" class="progress-wrap" hidden></div>
+      <div id="scanResults" class="results" aria-live="polite"></div>
+    </section>
+
+    <!-- SWEEP -->
+    <section role="tabpanel" id="panel-sweep" aria-labelledby="tab-sweep" tabindex="0" hidden>
+      <h1>System sweep</h1>
+      <p class="lede">Automatically scan the spots malware hides: startup entries, running
+        processes, scheduled tasks, Temp, and Downloads.</p>
+      <form id="sweepForm" class="controls">
+        <div class="field field-check">
+          <input type="checkbox" id="sweepQuick" name="quick">
+          <label for="sweepQuick">Quick mode (top-level temp/downloads, executables only)</label>
+        </div>
+        <div class="field field-end">
+          <button type="submit" class="btn btn-primary" id="sweepBtn">Run sweep</button>
+        </div>
+      </form>
+      <div id="sweepCategories" class="categories" aria-live="polite"></div>
+      <div id="sweepProgress" class="progress-wrap" hidden></div>
+      <div id="sweepResults" class="results" aria-live="polite"></div>
+    </section>
+
+    <!-- HISTORY -->
+    <section role="tabpanel" id="panel-history" aria-labelledby="tab-history" tabindex="0" hidden>
+      <h1>Scan history</h1>
+      <div id="historyList" class="results" aria-live="polite"></div>
+    </section>
+
+    <!-- QUARANTINE -->
+    <section role="tabpanel" id="panel-quarantine" aria-labelledby="tab-quarantine" tabindex="0" hidden>
+      <h1>Quarantine</h1>
+      <p class="lede">Isolated files. Restoring puts a file back where it was; deleting removes
+        it permanently.</p>
+      <div id="quarantineList" class="results" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
+
+  <!-- Confirm dialog (accessible modal) -->
+  <div id="confirmBackdrop" class="modal-backdrop" hidden>
+    <div role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"
+         class="modal" id="confirmModal">
+      <h2 id="confirmTitle">Confirm</h2>
+      <p id="confirmBody">Are you sure?</p>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="confirmCancel">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmOk">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

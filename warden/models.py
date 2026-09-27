@@ -55,6 +55,16 @@ class Finding:
         d["severity_label"] = self.severity.label
         return d
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Finding":
+        return cls(
+            engine=d.get("engine", "?"),
+            name=d.get("name", "?"),
+            severity=Severity(int(d.get("severity", Severity.INFO))),
+            description=d.get("description", ""),
+            meta=d.get("meta", {}) or {},
+        )
+
 
 @dataclass(slots=True)
 class FileResult:
@@ -88,6 +98,17 @@ class FileResult:
             "verdict_label": self.verdict.label,
             "findings": [f.to_dict() for f in self.findings],
         }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "FileResult":
+        return cls(
+            path=d.get("path", ""),
+            size=int(d.get("size", 0)),
+            sha256=d.get("sha256"),
+            findings=[Finding.from_dict(f) for f in d.get("findings", [])],
+            scanned=bool(d.get("scanned", False)),
+            error=d.get("error"),
+        )
 
 
 @dataclass(slots=True)
