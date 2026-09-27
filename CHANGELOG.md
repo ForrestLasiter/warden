@@ -6,6 +6,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-27
+
+### Added
+- **Opt-in online hash reputation.** `warden lookup <file|hash>` checks a single
+  file or hash; `--online` enriches any scan or sweep. Two providers, chosen
+  automatically: Team Cymru's Malware Hash Registry (keyless, over DNS-over-HTTPS)
+  and VirusTotal (optional free API key via `WARDEN_VT_API_KEY` or config).
+  Results are cached in `~/.warden/cache/`; every lookup is off by default and
+  sends only a hash, never the file.
+- Dashboard scan form gained an "Check hashes online" opt-in toggle.
+- `ScanContext` now computes SHA-1 alongside SHA-256 in a single pass.
+
+### Changed
+- Enabled GitHub Discussions.
+
 ## [0.2.0] - 2026-09-27
 
 ### Added
@@ -35,6 +50,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ForrestLasiter/warden/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ForrestLasiter/warden/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ForrestLasiter/warden/releases/tag/v0.1.0

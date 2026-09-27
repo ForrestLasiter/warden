@@ -71,9 +71,13 @@ class JobManager:
 JOBS = JobManager()
 
 
-def _run_scan_job(job_id: str, path: str, min_severity: str, save: bool) -> None:
+def _run_scan_job(job_id: str, path: str, min_severity: str, save: bool, online: bool = False) -> None:
     try:
-        scanner = Scanner()
+        from ..config import Config
+        cfg = Config.load()
+        if online:
+            cfg.online_hash_lookup = True
+        scanner = Scanner(cfg)
 
         def progress(result: FileResult) -> None:
             JOBS.bump(job_id, result.is_threat)
@@ -212,7 +216,8 @@ class Handler(BaseHTTPRequestHandler):
             job_id = JOBS.create("scan")
             threading.Thread(
                 target=_run_scan_job,
-                args=(job_id, target, body.get("min_severity", "low"), bool(body.get("save", True))),
+                args=(job_id, target, body.get("min_severity", "low"),
+                      bool(body.get("save", True)), bool(body.get("online", False))),
                 daemon=True,
             ).start()
             return self._send_json({"job": job_id})

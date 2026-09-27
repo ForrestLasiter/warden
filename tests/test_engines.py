@@ -24,6 +24,8 @@ class _MemCtx(ScanContext):
         self.max_read = 1 << 20
         self._data = data
         self._sha256 = None
+        self._sha1 = None
+        self._digests_done = False
         self._read_error = None
 
 
@@ -74,3 +76,21 @@ def test_clean_file_has_no_findings():
     eng = HeuristicsEngine()
     findings = eng.scan(_MemCtx(b"just a normal note, nothing here", "notes.txt"))
     assert findings == []
+
+
+def test_scancontext_sha1_and_sha256(tmp_path):
+    import hashlib
+    from warden.engines.base import ScanContext
+    data = b"warden hashing test"
+    f = tmp_path / "x.bin"
+    f.write_bytes(data)
+    ctx = ScanContext(f, len(data), 1 << 20)
+    assert ctx.sha256() == hashlib.sha256(data).hexdigest()
+    assert ctx.sha1() == hashlib.sha1(data).hexdigest()
+
+
+def test_hash_engine_offline_needs_no_network():
+    """With no reputation provider, the hash engine never touches the network."""
+    from warden.engines.hashcheck import HashEngine
+    eng = HashEngine([], reputation=None)
+    assert eng.scan(_MemCtx(b"anything", "a.exe")) == []

@@ -191,7 +191,10 @@ $("#scanForm").addEventListener("submit", async (e) => {
   try {
     const { job } = await api("/api/scan", {
       method: "POST",
-      body: JSON.stringify({ path, min_severity: $("#scanSeverity").value, save: true }),
+      body: JSON.stringify({
+        path, min_severity: $("#scanSeverity").value, save: true,
+        online: $("#scanOnline").checked,
+      }),
     });
     const done = await pollJob(job, (j) =>
       { text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`; });

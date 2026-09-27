@@ -22,7 +22,8 @@ class ScanContext:
     pull into memory for very large files.
     """
 
-    __slots__ = ("path", "size", "max_read", "_data", "_sha256", "_read_error")
+    __slots__ = ("path", "size", "max_read", "_data", "_sha256", "_sha1",
+                 "_digests_done", "_read_error")
 
     def __init__(self, path: Path, size: int, max_read: int):
         self.path = path
@@ -30,6 +31,8 @@ class ScanContext:
         self.max_read = max_read
         self._data: bytes | None = None
         self._sha256: str | None = None
+        self._sha1: str | None = None
+        self._digests_done: bool = False
         self._read_error: str | None = None
 
     @property
@@ -47,18 +50,32 @@ class ScanContext:
                 self._data = b""
         return self._data
 
+    def _compute_digests(self) -> None:
+        """Stream the file once, computing SHA-256 and SHA-1 together."""
+        if self._digests_done:
+            return
+        s256 = hashlib.sha256()
+        s1 = hashlib.sha1()
+        try:
+            with open(self.path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    s256.update(chunk)
+                    s1.update(chunk)
+            self._sha256 = s256.hexdigest()
+            self._sha1 = s1.hexdigest()
+        except OSError as exc:
+            self._read_error = str(exc)
+        self._digests_done = True
+
     def sha256(self) -> str | None:
         """Full-file SHA-256 (streamed, not capped). Cached. None on error."""
-        if self._sha256 is None and self._read_error is None:
-            h = hashlib.sha256()
-            try:
-                with open(self.path, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                        h.update(chunk)
-                self._sha256 = h.hexdigest()
-            except OSError as exc:
-                self._read_error = str(exc)
+        self._compute_digests()
         return self._sha256
+
+    def sha1(self) -> str | None:
+        """Full-file SHA-1 (used by the Team Cymru hash registry). Cached."""
+        self._compute_digests()
+        return self._sha1
 
 
 @runtime_checkable

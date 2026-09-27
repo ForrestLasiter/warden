@@ -19,13 +19,22 @@ from .base import ScanContext
 
 _HASH_FILENAMES = ("malware_hashes.txt", "hashes.txt")
 
+# Only these file types are worth an online lookup - keeps query volume (and API
+# rate-limit pressure) sane while covering the formats malware actually uses.
+_ONLINE_CANDIDATE_EXTS = {
+    ".exe", ".dll", ".scr", ".sys", ".com", ".cpl", ".msi", ".ocx",
+    ".ps1", ".vbs", ".js", ".jse", ".wsf", ".bat", ".cmd", ".hta", ".jar",
+    ".doc", ".docm", ".xls", ".xlsm", ".ppt", ".pptm", ".rtf", ".pdf",
+    ".zip", ".rar", ".7z", ".iso", ".lnk",
+}
+
 
 class HashEngine:
     name = "hash"
 
-    def __init__(self, hash_dirs: list[Path], online: bool = False):
+    def __init__(self, hash_dirs: list[Path], reputation=None):
         self._bad: dict[str, str] = {}  # sha256 -> label
-        self._online = online
+        self._reputation = reputation   # OnlineReputation | None
         self._load(hash_dirs)
 
     def _load(self, hash_dirs: list[Path]) -> None:
@@ -50,6 +59,10 @@ class HashEngine:
                 except OSError:
                     continue
 
+    @property
+    def _online(self) -> bool:
+        return self._reputation is not None and self._reputation.available
+
     def available(self) -> bool:
         return bool(self._bad) or self._online
 
@@ -57,7 +70,7 @@ class HashEngine:
     def status(self) -> str:
         bits = [f"{len(self._bad)} known-bad hash(es)"]
         if self._online:
-            bits.append("online lookup ON")
+            bits.append(f"online: {self._reputation.status}")
         return ", ".join(bits)
 
     def scan(self, ctx: ScanContext) -> list[Finding]:
@@ -74,6 +87,16 @@ class HashEngine:
                 description=f"File hash matches a known-malware entry ({label})",
                 meta={"sha256": digest, "source": "local-denylist"},
             ))
-        # Online lookup is a stub hook for now; wired up in a later phase so we
-        # don't silently exfiltrate hashes. Kept here to define the contract.
+
+        # Online reputation - opt-in, candidate file types only, cached.
+        if self._online and not label and ctx.path.suffix.lower() in _ONLINE_CANDIDATE_EXTS:
+            result = self._reputation.check(digest, ctx.sha1())
+            if result and result.malicious:
+                findings.append(Finding(
+                    engine=self.name,
+                    name=f"online-reputation-{result.source}",
+                    severity=Severity.CRITICAL,
+                    description=f"Known malware by online reputation: {result.detections}",
+                    meta={"sha256": digest, "source": result.source, **(result.detail or {})},
+                ))
         return findings

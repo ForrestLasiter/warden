@@ -30,8 +30,12 @@ class Scanner:
         self.config.ensure_dirs()
 
         rule_dirs = [BUNDLED_RULES_DIR, self.config.rules_user_dir]
+        reputation = None
+        if self.config.online_hash_lookup:
+            from .reputation import OnlineReputation
+            reputation = OnlineReputation(self.config)
         self.yara = YaraEngine(rule_dirs)
-        self.hashes = HashEngine(rule_dirs, online=self.config.online_hash_lookup)
+        self.hashes = HashEngine(rule_dirs, reputation=reputation)
         self.heuristics = HeuristicsEngine()
         self.clamav = ClamAVEngine(enabled=self.config.use_clamav)
 

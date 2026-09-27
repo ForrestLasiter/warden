@@ -94,6 +94,7 @@ def scan(
     json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary and threats."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
+    online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
 ):
     """Scan a file or folder for malware on demand."""
     target = Path(path)
@@ -107,7 +108,10 @@ def scan(
         console.print(f"[red]Invalid --min-severity:[/] {min_severity}")
         raise typer.Exit(2)
 
-    scanner = Scanner()
+    cfg = Config.load()
+    if online:
+        cfg.online_hash_lookup = True
+    scanner = Scanner(cfg)
     console.print(Panel.fit(
         f"[bold]Warden[/] scanning [cyan]{target}[/]\n"
         f"engines: {', '.join(scanner.active_engines()) or 'none!'}",
@@ -162,6 +166,7 @@ def sweep(
     min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level."),
     json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
+    online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
 ):
     """Sweep the high-value spots malware hides: autoruns, processes, tasks, Temp, Downloads."""
     try:
@@ -170,7 +175,10 @@ def sweep(
         console.print(f"[red]Invalid --min-severity:[/] {min_severity}")
         raise typer.Exit(2)
 
-    sweeper = SystemSweep()
+    cfg = Config.load()
+    if online:
+        cfg.online_hash_lookup = True
+    sweeper = SystemSweep(cfg)
     console.print(Panel.fit(
         f"[bold]Warden[/] system sweep{' (quick)' if quick else ''}\n"
         f"engines: {', '.join(sweeper.scanner.active_engines()) or 'none!'}\n"
@@ -325,6 +333,64 @@ def quarantine_delete(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
     console.print(f"[green]Deleted[/] {entry_id}")
+
+
+@app.command()
+def lookup(
+    target: str = typer.Argument(..., help="A file path, or a SHA-256 / SHA-1 hash."),
+):
+    """Check a file or hash against online reputation (Team Cymru / VirusTotal)."""
+    from .reputation import OnlineReputation
+    from .engines.base import ScanContext
+
+    cfg = Config.load()
+    cfg.online_hash_lookup = True
+    rep = OnlineReputation(cfg, max_lookups=1)
+    if not rep.available:
+        console.print("[red]Online lookup unavailable[/] (httpx not installed).")
+        raise typer.Exit(1)
+
+    sha256 = sha1 = None
+    p = Path(target)
+    if p.is_file():
+        ctx = ScanContext(p, p.stat().st_size, cfg.max_scan_bytes)
+        sha256, sha1 = ctx.sha256(), ctx.sha1()
+    else:
+        h = target.strip().lower()
+        if len(h) == 64 and all(c in "0123456789abcdef" for c in h):
+            sha256 = h
+        elif len(h) == 40 and all(c in "0123456789abcdef" for c in h):
+            sha1 = h
+        else:
+            console.print("[red]Not a file or a valid SHA-256/SHA-1 hash.[/]")
+            raise typer.Exit(2)
+
+    if rep.provider == "cymru" and not sha1:
+        console.print("[yellow]The keyless Team Cymru provider needs a SHA-1 or a file.[/] "
+                      "Pass a file, a SHA-1 hash, or set a VirusTotal key for SHA-256 lookups.")
+        raise typer.Exit(2)
+
+    console.print(f"[dim]Provider: {rep.status}[/]")
+    with console.status("Querying online reputation…"):
+        result = rep.check(sha256, sha1)
+
+    if result is None:
+        console.print("[yellow]No answer[/] (network issue or rate limited). Try again.")
+        raise typer.Exit(1)
+    if not result.known:
+        console.print(Panel.fit(
+            f"[green]Not found[/] in {result.source}.\n"
+            f"[dim]Unknown to this source — not proof it's clean.[/]",
+            border_style="green", title="Reputation"))
+        raise typer.Exit(0)
+    if result.malicious:
+        console.print(Panel.fit(
+            f"[bold white on red] KNOWN MALWARE [/]\n{result.detections}",
+            border_style="red", title="Reputation"))
+        raise typer.Exit(1)
+    console.print(Panel.fit(
+        f"[green]Known and not flagged as malicious[/]\n{result.detections}",
+        border_style="green", title="Reputation"))
 
 
 @app.command()

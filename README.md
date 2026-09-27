@@ -75,7 +75,7 @@ verdict, rated **Info → Low → Medium → High → Critical**:
 | --- | --- | --- |
 | **YARA** | Rule-based pattern matching (VirusTotal's `yara-x`). Ships with starter rules; drop in community packs. | built in |
 | **Heuristics** | Structural red flags: fake double extensions (`invoice.pdf.exe`), packed PE sections, risky imports, obfuscated scripts, high entropy. | built in |
-| **Hash reputation** | SHA-256 against a local known-bad list (feed it MalwareBazaar exports). | built in |
+| **Hash reputation** | SHA-256 against a local known-bad list, plus opt-in online lookups (see below). | built in |
 | **ClamAV** | Millions of signatures via `clamscan`/`clamdscan`. | optional — install ClamAV |
 
 ## Dashboard
@@ -94,6 +94,10 @@ warden scan <path>                   # scan a file or folder
 warden scan C:\ --min-severity high  # scan a whole drive, only loud findings
 warden scan .\Downloads --quarantine # scan, then offer to isolate anything flagged
 warden scan .\Downloads --json out.json --save   # machine-readable + saved to history
+warden scan suspicious.exe --online  # also check hashes against online reputation
+
+warden lookup suspicious.exe         # look up one file's reputation
+warden lookup <sha256-or-sha1>       # ...or just a hash
 
 warden sweep                         # scan autoruns, processes, tasks, Temp, Downloads
 warden sweep --quick                 # faster: top-level temp/downloads + executables only
@@ -131,6 +135,32 @@ and the dashboard.
   can't execute, and restore is byte-for-byte identical.
 - **Private.** Nothing leaves your machine. Online hash lookups are opt-in and
   off by default.
+
+## Online reputation (opt-in)
+
+Warden can ask an online service whether a file is known malware. This is **off
+by default**; enable it per run with `--online`, or in `~/.warden/config.json`
+(`"online_hash_lookup": true`). It sends the file's **hash** — never the file
+itself — and results are cached in `~/.warden/cache/`.
+
+Two providers, chosen automatically:
+
+- **Team Cymru Malware Hash Registry** (default, **no API key**) — returns an AV
+  detection percentage for known-bad files over DNS-over-HTTPS. Works out of the box.
+- **VirusTotal** (optional, richer — aggregates 70+ engines) — set a **free** API
+  key via the `WARDEN_VT_API_KEY` environment variable or `virustotal_api_key` in
+  your config. Get one at [virustotal.com](https://www.virustotal.com/) → Sign up →
+  API key. The free tier is rate-limited, so Warden caps and caches lookups.
+
+```bash
+warden lookup C:\path\to\file.exe    # check a file
+warden lookup <sha256-or-sha1>       # ...or a bare hash
+warden scan .\Downloads --online     # enrich a scan with reputation
+```
+
+> **Privacy:** a hash is a one-way fingerprint, not your file's contents, but it
+> still leaves your machine when you opt in. Leave it off if you'd rather stay
+> fully offline — every other engine works without a network.
 
 ## Adding detection content
 
@@ -183,7 +213,7 @@ pyinstaller packaging/warden.spec --noconfirm   # -> dist/warden(.exe)
 - [x] Scheduled scans with saved history
 - [x] Accessible web dashboard (WCAG 2.1 AA, light/dark)
 - [x] Standalone Windows/Linux/macOS binaries on the Releases page
-- [ ] Opt-in online hash reputation lookup
+- [x] Opt-in online hash reputation lookup (Team Cymru — keyless; VirusTotal — free key)
 - [ ] Signed binaries (quiet SmartScreen / Gatekeeper)
 - [ ] ARM64 Linux builds
 

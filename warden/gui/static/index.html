@@ -68,6 +68,10 @@
           <button type="submit" class="btn btn-primary" id="scanBtn">Start scan</button>
         </div>
       </form>
+      <div class="field field-check scan-online">
+        <input type="checkbox" id="scanOnline" name="online">
+        <label for="scanOnline">Check hashes online (opt-in — sends file hashes, not files, to a reputation service)</label>
+      </div>
       <div id="scanProgress" class="progress-wrap" hidden></div>
       <div id="scanResults" class="results" aria-live="polite"></div>
     </section>

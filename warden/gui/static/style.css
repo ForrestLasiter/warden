@@ -157,6 +157,8 @@ h1 { font-size: 1.5rem; margin: 0 0 16px; }
 .field-grow { flex: 1 1 320px; }
 .field-end { align-self: flex-end; }
 .field-check { flex-direction: row; align-items: center; gap: 8px; }
+.scan-online { margin: -6px 0 18px; color: var(--muted); font-size: .88rem; }
+.scan-online label { font-weight: 400; }
 .field label { font-size: .85rem; font-weight: 600; }
 input[type="text"], select {
   padding: 9px 12px; border: 1px solid var(--border); border-radius: 6px;
