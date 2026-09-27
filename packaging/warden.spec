@@ -12,11 +12,20 @@ Output:
     dist/warden.exe    (Windows)
 """
 
-from PyInstaller.utils.hooks import collect_all, collect_data_files
+import os
+from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
+
+# Repo root (this spec lives in packaging/). Putting it on the search path makes
+# PyInstaller find the `warden` package as a plain directory, regardless of how
+# it was installed (editable/PEP 660 installs are otherwise opaque to analysis).
+REPO_ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
 datas = []
 binaries = []
 hiddenimports = []
+
+# Force-include every warden submodule so nothing is missed by static analysis.
+hiddenimports += collect_submodules("warden")
 
 # yara-x ships a compiled extension + metadata; grab everything it needs.
 _yx_datas, _yx_bins, _yx_hidden = collect_all("yara_x")
@@ -35,7 +44,7 @@ hiddenimports += ["warden", "warden.gui", "warden.gui.server"]
 
 a = Analysis(
     ["entry.py"],
-    pathex=[],
+    pathex=[REPO_ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
