@@ -26,6 +26,7 @@ from .config import Config
 from .models import FileResult, Severity, ScanReport
 from .scanner import Scanner
 from .quarantine import Quarantine, QuarantineError
+from .sweep import SystemSweep
 
 app = typer.Typer(
     add_completion=False,
@@ -139,6 +140,74 @@ def scan(
         _do_quarantine(threats)
 
     # Exit code reflects the worst verdict, useful for scripts/scheduling.
+    worst = max((r.verdict for r in report.results), default=Severity.CLEAN)
+    raise typer.Exit(1 if worst >= Severity.MEDIUM else 0)
+
+
+@app.command()
+def sweep(
+    quick: bool = typer.Option(False, "--quick", help="Faster: top-level temp/downloads + executables only."),
+    quarantine: bool = typer.Option(False, "--quarantine", "-q", help="Offer to isolate flagged files."),
+    min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level."),
+    json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
+):
+    """Sweep the high-value spots malware hides: autoruns, processes, tasks, Temp, Downloads."""
+    try:
+        threshold = Severity.parse(min_severity)
+    except (KeyError, ValueError):
+        console.print(f"[red]Invalid --min-severity:[/] {min_severity}")
+        raise typer.Exit(2)
+
+    sweeper = SystemSweep()
+    console.print(Panel.fit(
+        f"[bold]Warden[/] system sweep{' (quick)' if quick else ''}\n"
+        f"engines: {', '.join(sweeper.scanner.active_engines()) or 'none!'}\n"
+        f"[dim]gathering autoruns, processes, scheduled tasks, Temp, Downloads...[/]",
+        border_style="blue",
+    ))
+
+    threats: list[FileResult] = []
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.fields[count]} files"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("sweeping", total=None, count=0)
+        count = 0
+
+        def on_file(result: FileResult):
+            nonlocal count
+            count += 1
+            progress.update(task, count=count, description=f"scanning {Path(result.path).name[:40]}")
+            if result.is_threat:
+                threats.append(result)
+
+        report, categories = sweeper.run(quick=quick, progress=on_file)
+
+    # Category summary
+    cat_table = Table(title="Swept locations", show_header=True)
+    cat_table.add_column("Category", style="bold")
+    cat_table.add_column("Files", justify="right")
+    cat_table.add_column("What")
+    for c in categories:
+        cat_table.add_row(c.name, str(len(c.paths)), c.description)
+    console.print(cat_table)
+
+    _print_report(report, threshold=threshold, quiet=False)
+
+    if json_out:
+        Path(json_out).write_text(_json.dumps(report.to_dict(), indent=2), encoding="utf-8")
+        console.print(f"[dim]JSON report written to {json_out}[/]")
+
+    # Recompute threats from the report (location heuristic may have added some).
+    flagged = [r for r in report.results if r.is_threat]
+    if quarantine and flagged:
+        _do_quarantine(flagged)
+
     worst = max((r.verdict for r in report.results), default=Severity.CLEAN)
     raise typer.Exit(1 if worst >= Severity.MEDIUM else 0)
 

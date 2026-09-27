@@ -41,6 +41,10 @@ warden scan C:\ --min-severity high  # scan a whole drive, only loud findings
 warden scan .\Downloads --quarantine # scan, then offer to isolate anything flagged
 warden scan .\Downloads --json report.json   # machine-readable output
 
+warden sweep                         # auto-scan autoruns, processes, tasks, Temp, Downloads
+warden sweep --quick                 # faster: top-level temp/downloads + executables only
+warden sweep --quarantine            # sweep, then offer to isolate anything flagged
+
 warden quarantine list               # see isolated files
 warden quarantine restore <id>       # put one back
 warden quarantine delete <id>        # permanently remove (asks first)
@@ -75,7 +79,7 @@ For the full ClamAV signature set: install ClamAV, run `freshclam`, and Warden p
 
 - [x] On-demand file/folder scan (YARA + heuristics + hash + ClamAV)
 - [x] Safe, reversible quarantine
-- [ ] **System sweep** — auto-scan the high-value spots (startup/autoruns, scheduled tasks, Temp, Downloads, running processes, unsigned binaries in odd places)
+- [x] **System sweep** — auto-scan the high-value spots (startup/autoruns, scheduled tasks, Temp, Downloads, running processes; flags unsigned executables in user-writable locations)
 - [ ] **Scheduled scans** (Windows Task Scheduler / cron integration) with history
 - [ ] **GUI dashboard** — results, threats, history, one-click quarantine (WCAG 2.1 AA)
 - [ ] Opt-in online hash reputation lookup

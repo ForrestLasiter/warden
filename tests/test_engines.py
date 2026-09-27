@@ -43,6 +43,19 @@ def test_yara_detects_powershell_downloader():
     assert any(f.name == "Suspicious_PowerShell_Downloader" for f in findings)
 
 
+def test_yara_lolbin_rules_skip_large_binaries():
+    """Command/script rules must not fire inside big binaries (FP guard)."""
+    eng = YaraEngine([BUNDLED_RULES_DIR])
+    # certutil strings embedded in a 3 MB blob (simulates a large signed exe).
+    big = b"certutil -decode payload" + b"\x00" * (3 * 1024 * 1024)
+    findings = eng.scan(_MemCtx(big, "big.exe"))
+    assert not any(f.name == "Certutil_LOLBin_Abuse" for f in findings)
+    # Same strings in a small script SHOULD still be caught.
+    small = b"certutil -decode evil.b64 evil.exe"
+    findings2 = eng.scan(_MemCtx(small, "x.bat"))
+    assert any(f.name == "Certutil_LOLBin_Abuse" for f in findings2)
+
+
 def test_heuristics_fake_double_extension():
     eng = HeuristicsEngine()
     findings = eng.scan(_MemCtx(b"whatever", "invoice.pdf.exe"))

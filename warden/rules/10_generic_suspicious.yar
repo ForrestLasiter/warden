@@ -2,6 +2,12 @@
    Generic, low-false-positive heuristic rules for common malware shapes.
    These are intentionally conservative starter rules. Add your own or drop
    community rule packs into ~/.warden/rules/.
+
+   NOTE: the command/script rules below are guarded with `filesize < 2MB`.
+   These patterns describe *scripts and command lines*, which are tiny. Large
+   compiled binaries can contain the same ASCII strings incidentally (e.g. help
+   text), which caused false positives on legit signed apps. Scripts stay well
+   under the guard, so detection is unaffected while FPs drop sharply.
 */
 
 rule Suspicious_PowerShell_Downloader
@@ -17,7 +23,7 @@ rule Suspicious_PowerShell_Downloader
         $dl2   = "DownloadData" nocase
         $net   = "Net.WebClient" nocase
     condition:
-        ($iex or $iex2) and ($dl1 or $dl2 or $net)
+        filesize < 2MB and ($iex or $iex2) and ($dl1 or $dl2 or $net)
 }
 
 rule Encoded_PowerShell_Command
@@ -33,7 +39,7 @@ rule Encoded_PowerShell_Command
         $hid2 = "-windowstyle hidden" nocase
         $nop  = "-nop" nocase
     condition:
-        any of ($enc*) or (2 of ($hid, $hid2, $nop))
+        filesize < 2MB and (any of ($enc*) or (2 of ($hid, $hid2, $nop)))
 }
 
 rule Certutil_LOLBin_Abuse
@@ -48,7 +54,7 @@ rule Certutil_LOLBin_Abuse
         $c = "-urlcache" nocase
         $d = "-f -split" nocase
     condition:
-        $a and ($b or $c or $d)
+        filesize < 2MB and $a and ($b or $c or $d)
 }
 
 rule Ransomware_Shadow_Copy_Deletion
@@ -79,5 +85,5 @@ rule Suspicious_Script_Obfuscation_JS
         $c = "String.fromCharCode(" nocase
         $d = "ActiveXObject(\"WScript.Shell\")" nocase
     condition:
-        2 of them
+        filesize < 2MB and 2 of them
 }
