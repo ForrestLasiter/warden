@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-27
+
+### Added
+- `warden config` command group to view and change settings without hand-editing
+  JSON: `show`, `get` (`--reveal`), `set`, `unset`, `path`, and `set-vt-key`
+  (hidden prompt so the key stays out of shell history; enables online lookups
+  by default). Secret values are masked in output.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added
@@ -50,7 +58,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ForrestLasiter/warden/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ForrestLasiter/warden/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ForrestLasiter/warden/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ForrestLasiter/warden/releases/tag/v0.1.0

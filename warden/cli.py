@@ -41,6 +41,8 @@ history_app = typer.Typer(help="Review past scan/sweep reports.", no_args_is_hel
 app.add_typer(history_app, name="history")
 schedule_app = typer.Typer(help="Schedule recurring scans via the OS scheduler.", no_args_is_help=True)
 app.add_typer(schedule_app, name="schedule")
+config_app = typer.Typer(help="View and change Warden settings (~/.warden/config.json).", no_args_is_help=True)
+app.add_typer(config_app, name="config")
 
 console = Console()
 
@@ -531,6 +533,131 @@ def schedule_remove(name: str = typer.Argument(..., help="Schedule name to remov
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
     console.print(f"[green]Removed schedule[/] {name}")
+
+
+# -- config subcommands --------------------------------------------------
+# name -> (type, help)
+_CONFIG_FIELDS = {
+    "online_hash_lookup": (bool, "Enable online hash reputation by default."),
+    "virustotal_api_key": (str, "VirusTotal API key (stored in plaintext in config.json)."),
+    "use_clamav": (bool, "Use ClamAV if its binaries are on PATH."),
+    "follow_symlinks": (bool, "Follow symlinks when walking folders."),
+    "max_scan_bytes": (int, "Max file size (bytes) for deep content scanning."),
+}
+_SECRET_FIELDS = {"virustotal_api_key"}
+
+
+def _parse_bool(value: str) -> bool:
+    v = value.strip().lower()
+    if v in ("1", "true", "yes", "on", "y"):
+        return True
+    if v in ("0", "false", "no", "off", "n"):
+        return False
+    raise ValueError(f"expected true/false, got {value!r}")
+
+
+def _mask(value: str) -> str:
+    if not value:
+        return "[dim](not set)[/]"
+    return "•" * max(0, len(value) - 4) + value[-4:]
+
+
+@config_app.command("show")
+def config_show():
+    """Show current settings."""
+    cfg = Config.load()
+    import os as _os
+    table = Table(title="Warden configuration")
+    table.add_column("Setting", style="bold")
+    table.add_column("Value")
+    for name in _CONFIG_FIELDS:
+        val = getattr(cfg, name)
+        shown = _mask(str(val)) if name in _SECRET_FIELDS else str(val)
+        table.add_row(name, shown)
+    console.print(table)
+    if not cfg.virustotal_api_key and _os.environ.get("WARDEN_VT_API_KEY"):
+        console.print("[dim]A VirusTotal key is set via the WARDEN_VT_API_KEY environment variable.[/]")
+    console.print(f"[dim]Config file: {cfg.config_path}[/]")
+
+
+@config_app.command("get")
+def config_get(
+    key: str = typer.Argument(..., help="Setting name."),
+    reveal: bool = typer.Option(False, "--reveal", help="Show secret values in full."),
+):
+    """Print one setting's value."""
+    if key not in _CONFIG_FIELDS:
+        console.print(f"[red]Unknown setting[/] '{key}'. Options: {', '.join(_CONFIG_FIELDS)}")
+        raise typer.Exit(2)
+    cfg = Config.load()
+    val = getattr(cfg, key)
+    if key in _SECRET_FIELDS and not reveal:
+        val = _mask(str(val))
+    console.print(val)
+
+
+@config_app.command("set")
+def config_set(
+    key: str = typer.Argument(..., help="Setting name."),
+    value: str = typer.Argument(..., help="New value."),
+):
+    """Set a setting and save it."""
+    if key not in _CONFIG_FIELDS:
+        console.print(f"[red]Unknown setting[/] '{key}'. Options: {', '.join(_CONFIG_FIELDS)}")
+        raise typer.Exit(2)
+    typ = _CONFIG_FIELDS[key][0]
+    cfg = Config.load()
+    try:
+        coerced = _parse_bool(value) if typ is bool else typ(value)
+    except (ValueError, TypeError) as exc:
+        console.print(f"[red]Invalid value for {key}:[/] {exc}")
+        raise typer.Exit(2)
+    setattr(cfg, key, coerced)
+    cfg.save()
+    shown = _mask(str(coerced)) if key in _SECRET_FIELDS else str(coerced)
+    console.print(f"[green]Set[/] {key} = {shown}")
+
+
+@config_app.command("unset")
+def config_unset(key: str = typer.Argument(..., help="Setting name to clear/reset.")):
+    """Reset a setting to its default."""
+    if key not in _CONFIG_FIELDS:
+        console.print(f"[red]Unknown setting[/] '{key}'. Options: {', '.join(_CONFIG_FIELDS)}")
+        raise typer.Exit(2)
+    default = getattr(Config(), key)
+    cfg = Config.load()
+    setattr(cfg, key, default)
+    cfg.save()
+    console.print(f"[green]Reset[/] {key} to default ({default!r})")
+
+
+@config_app.command("set-vt-key")
+def config_set_vt_key(
+    key: Optional[str] = typer.Argument(None, help="VirusTotal API key. Omit to be prompted (hidden)."),
+    enable: bool = typer.Option(True, "--enable/--no-enable", help="Also turn on online lookups."),
+):
+    """Store your VirusTotal API key (prompts hidden if omitted, keeping it out of shell history)."""
+    if not key:
+        key = typer.prompt("VirusTotal API key", hide_input=True)
+    key = key.strip()
+    if not key:
+        console.print("[yellow]No key entered; nothing changed.[/]")
+        raise typer.Exit(1)
+    cfg = Config.load()
+    cfg.virustotal_api_key = key
+    if enable:
+        cfg.online_hash_lookup = True
+    cfg.save()
+    console.print(f"[green]Saved VirusTotal key[/] ({_mask(key)}).")
+    if enable:
+        console.print("[dim]Online reputation is now enabled by default. Disable with:[/] warden config set online_hash_lookup false")
+    console.print(f"[dim]Stored in {cfg.config_path} (plaintext).[/]")
+
+
+@config_app.command("path")
+def config_path():
+    """Print the path to the config file."""
+    console.print(str(Config.load().config_path))
 
 
 def main():

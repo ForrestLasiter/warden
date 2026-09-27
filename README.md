@@ -114,6 +114,9 @@ warden schedule list
 warden schedule remove nightly
 
 warden status                        # which engines are active
+warden config show                   # view settings (secrets masked)
+warden config set-vt-key             # store a VirusTotal API key (hidden prompt)
+warden config set online_hash_lookup true   # change any setting
 warden update-rules                  # how to add YARA rules & hash feeds
 ```
 
@@ -147,10 +150,16 @@ Two providers, chosen automatically:
 
 - **Team Cymru Malware Hash Registry** (default, **no API key**) — returns an AV
   detection percentage for known-bad files over DNS-over-HTTPS. Works out of the box.
-- **VirusTotal** (optional, richer — aggregates 70+ engines) — set a **free** API
-  key via the `WARDEN_VT_API_KEY` environment variable or `virustotal_api_key` in
-  your config. Get one at [virustotal.com](https://www.virustotal.com/) → Sign up →
-  API key. The free tier is rate-limited, so Warden caps and caches lookups.
+- **VirusTotal** (optional, richer — aggregates 70+ engines) — get a **free** API
+  key at [virustotal.com](https://www.virustotal.com/) (Sign up → API key), then
+  store it with a hidden prompt (keeps it out of shell history):
+
+  ```bash
+  warden config set-vt-key            # prompts for the key, enables online lookups
+  ```
+
+  The free tier is rate-limited, so Warden caps and caches lookups. You can also
+  set `WARDEN_VT_API_KEY` in your environment instead.
 
 ```bash
 warden lookup C:\path\to\file.exe    # check a file
