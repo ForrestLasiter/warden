@@ -149,18 +149,24 @@ def _cymru_lookup(sha1: str | None) -> ReputationResult | None:
     data = r.json()
     answers = data.get("Answer") or []
     for ans in answers:
-        txt = str(ans.get("data", "")).strip().strip('"')
-        # Format: "<last_seen_epoch> <detection_percent>"
-        parts = txt.split()
-        if len(parts) == 2 and parts[1].isdigit():
-            pct = int(parts[1])
-            return ReputationResult(
-                known=True, malicious=True, source="cymru",
-                detections=f"{pct}% AV detection (Team Cymru MHR)",
-                detail={"last_seen": parts[0], "detection_pct": pct},
-            )
+        hit = _parse_cymru_txt(str(ans.get("data", "")))
+        if hit is not None:
+            return hit
     # NXDOMAIN / no TXT => not in the registry (not necessarily clean).
     return ReputationResult(known=False, malicious=False, source="cymru")
+
+
+def _parse_cymru_txt(txt: str) -> ReputationResult | None:
+    """Parse a Team Cymru TXT record: '<last_seen_epoch> <detection_percent>'."""
+    parts = txt.strip().strip('"').split()
+    if len(parts) == 2 and parts[1].isdigit():
+        pct = int(parts[1])
+        return ReputationResult(
+            known=True, malicious=True, source="cymru",
+            detections=f"{pct}% AV detection (Team Cymru MHR)",
+            detail={"last_seen": parts[0], "detection_pct": pct},
+        )
+    return None
 
 
 def _vt_lookup(sha256: str | None, api_key: str) -> ReputationResult | None:
