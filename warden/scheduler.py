@@ -18,17 +18,39 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
 from .config import Config
+from .models import Severity
 
 IS_WINDOWS = os.name == "nt"
 _FREQUENCIES = ("hourly", "daily", "weekly")
 _CRON_BEGIN = "# >>> WARDEN schedules >>>"
 _CRON_END = "# <<< WARDEN schedules <<<"
+
+# A schedule name becomes part of a Task Scheduler task path and a crontab
+# comment. Restrict it hard so it cannot traverse the task namespace
+# (\Warden\..\Startup\evil) or inject extra crontab lines via a newline.
+_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Characters that must never appear in a target path we hand to schtasks/cron.
+_BAD_TARGET_CHARS = ("\n", "\r", "\x00", '"')
+
+
+def _validate_name(name: str) -> None:
+    if not _NAME_RE.match(name or ""):
+        raise SchedulerError(
+            "schedule name must be 1-64 characters of letters, digits, '-' or '_'"
+        )
+
+
+def _validate_target(target: str) -> None:
+    if any(c in target for c in _BAD_TARGET_CHARS):
+        raise SchedulerError("target path contains invalid characters")
 
 
 @dataclass(slots=True)
@@ -83,11 +105,20 @@ class Scheduler:
 
     # -- public actions ---------------------------------------------------
     def add(self, spec: ScheduleSpec) -> str:
+        _validate_name(spec.name)
+        if spec.kind not in ("scan", "sweep"):
+            raise SchedulerError("kind must be 'scan' or 'sweep'")
         if spec.frequency not in _FREQUENCIES:
             raise SchedulerError(f"frequency must be one of {_FREQUENCIES}")
         _validate_time(spec.time)
-        if spec.kind == "scan" and not spec.target:
-            raise SchedulerError("scan schedules need a --target path")
+        try:
+            Severity.parse(spec.min_severity)
+        except (KeyError, ValueError):
+            raise SchedulerError(f"invalid min-severity: {spec.min_severity!r}")
+        if spec.kind == "scan":
+            if not spec.target:
+                raise SchedulerError("scan schedules need a --target path")
+            _validate_target(spec.target)
 
         specs = self._load()
         if any(s["name"] == spec.name for s in specs):
@@ -176,7 +207,10 @@ def _cron_line(spec_dict: dict) -> str:
         when = f"{int(mm)} {int(hh)} * * 0"
     else:  # daily
         when = f"{int(mm)} {int(hh)} * * *"
-    cmd = " ".join(spec.command_args())
+    # cron runs each line via /bin/sh, so every argument (notably the target
+    # path) must be shell-quoted. Combined with _validate_target/_validate_name,
+    # this closes command injection through crafted schedule data.
+    cmd = " ".join(shlex.quote(a) for a in spec.command_args())
     return f"{when} {cmd}  # warden:{spec.name}"
 
 
