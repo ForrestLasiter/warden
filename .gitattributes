@@ -1,0 +1,20 @@
+# Normalize line endings: keep source as LF in the repo regardless of OS.
+* text=auto eol=lf
+
+# Windows-specific scripts stay CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never touch line endings, don't try to diff.
+*.png binary
+*.ico binary
+*.icns binary
+*.gif binary
+*.jpg binary
+*.jpeg binary
+*.woff binary
+*.woff2 binary
+
+# Language stats: don't count vendored/generated dirs.
+assets/** linguist-documentation

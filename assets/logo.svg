@@ -1,0 +1,12 @@
+<svg width="260" height="64" viewBox="0 0 260 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Warden">
+  <defs>
+    <linearGradient id="wShield" x1="32" y1="4" x2="32" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3b8eea"/>
+      <stop offset="1" stop-color="#1a56b3"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 4 L56 12 V30 C56 46 46 55 32 60 C18 55 8 46 8 30 V12 Z" fill="url(#wShield)"/>
+  <path d="M21 32.5 L28.5 40 L44 23" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="76" y="41" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#1f2328">Warden</text>
+  <text x="77" y="55" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif" font-size="10.5" font-weight="500" letter-spacing="0.5" fill="#656d76">MALWARE SCANNER</text>
+</svg>

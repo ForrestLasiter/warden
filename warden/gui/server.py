@@ -174,8 +174,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _api_get(self, path: str) -> None:
         if path == "/api/status":
+            from .. import __version__
             s = Scanner()
             return self._send_json({
+                "version": __version__,
                 "engines": s.engine_status(),
                 "active": s.active_engines(),
                 "data_dir": str(s.config.data_dir),

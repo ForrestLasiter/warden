@@ -90,6 +90,7 @@ async function loadStatus() {
     const s = await api("/api/status");
     const active = s.active.length ? s.active.join(", ") : "none";
     $("#engineStatus").textContent = `Engines active: ${active}`;
+    if (s.version) $("#footerVersion").textContent = `Warden v${s.version}`;
   } catch (e) {
     $("#engineStatus").textContent = "Could not load engine status";
   }

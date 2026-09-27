@@ -13,12 +13,16 @@ Output:
 """
 
 import os
+import sys
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_submodules
 
 # Repo root (this spec lives in packaging/). Putting it on the search path makes
 # PyInstaller find the `warden` package as a plain directory, regardless of how
 # it was installed (editable/PEP 660 installs are otherwise opaque to analysis).
 REPO_ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
+
+# Windows uses the .ico for the exe icon; other platforms ignore it.
+ICON = os.path.join(REPO_ROOT, "assets", "warden.ico") if sys.platform == "win32" else None
 
 datas = []
 binaries = []
@@ -73,4 +77,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=ICON,
 )

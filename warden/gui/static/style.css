@@ -116,10 +116,10 @@ body {
   padding: 12px 20px; background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
-.brand { display: flex; align-items: baseline; gap: 8px; }
-.brand-mark { font-size: 1.4rem; }
-.brand-name { font-size: 1.3rem; font-weight: 700; }
-.brand-tag { color: var(--muted); font-size: .85rem; }
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand-mark { display: block; flex: none; }
+.brand-name { font-size: 1.3rem; font-weight: 700; letter-spacing: -0.01em; }
+.brand-tag { color: var(--muted); font-size: .85rem; align-self: flex-end; padding-bottom: 3px; }
 .topbar-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .engine-status { margin: 0; color: var(--muted); font-size: .85rem; }
 
@@ -246,6 +246,16 @@ tbody tr:hover { background: var(--surface-2); }
 .row-actions { display: flex; gap: 8px; }
 
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+/* -- footer -- */
+.site-footer {
+  max-width: 960px; margin: 0 auto; padding: 20px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border);
+}
+.site-footer a { color: var(--accent); text-decoration: none; }
+.site-footer a:hover { text-decoration: underline; }
+.footer-note { margin-left: auto; }
 
 /* -- toast -- */
 .toast {
