@@ -27,6 +27,8 @@ from .models import FileResult, Severity, ScanReport
 from .scanner import Scanner
 from .quarantine import Quarantine, QuarantineError
 from .sweep import SystemSweep
+from .history import History
+from .scheduler import Scheduler, ScheduleSpec, SchedulerError
 
 app = typer.Typer(
     add_completion=False,
@@ -35,6 +37,10 @@ app = typer.Typer(
 )
 quarantine_app = typer.Typer(help="Manage quarantined files.", no_args_is_help=True)
 app.add_typer(quarantine_app, name="quarantine")
+history_app = typer.Typer(help="Review past scan/sweep reports.", no_args_is_help=True)
+app.add_typer(history_app, name="history")
+schedule_app = typer.Typer(help="Schedule recurring scans via the OS scheduler.", no_args_is_help=True)
+app.add_typer(schedule_app, name="schedule")
 
 console = Console()
 
@@ -87,6 +93,7 @@ def scan(
     min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level (clean/info/low/medium/high/critical)."),
     json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary and threats."),
+    save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
 ):
     """Scan a file or folder for malware on demand."""
     target = Path(path)
@@ -136,6 +143,10 @@ def scan(
         Path(json_out).write_text(_json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         console.print(f"[dim]JSON report written to {json_out}[/]")
 
+    if save:
+        entry = History().save(report, kind="scan")
+        console.print(f"[dim]Saved to history as {entry.id}[/]")
+
     if quarantine and threats:
         _do_quarantine(threats)
 
@@ -150,6 +161,7 @@ def sweep(
     quarantine: bool = typer.Option(False, "--quarantine", "-q", help="Offer to isolate flagged files."),
     min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level."),
     json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
+    save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
 ):
     """Sweep the high-value spots malware hides: autoruns, processes, tasks, Temp, Downloads."""
     try:
@@ -202,6 +214,10 @@ def sweep(
     if json_out:
         Path(json_out).write_text(_json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         console.print(f"[dim]JSON report written to {json_out}[/]")
+
+    if save:
+        entry = History().save(report, kind="sweep")
+        console.print(f"[dim]Saved to history as {entry.id}[/]")
 
     # Recompute threats from the report (location heuristic may have added some).
     flagged = [r for r in report.results if r.is_threat]
@@ -328,6 +344,113 @@ def update_rules():
         title="Adding rules & signatures",
         border_style="blue",
     ))
+
+
+# -- history subcommands -------------------------------------------------
+@history_app.command("list")
+def history_list(
+    limit: int = typer.Option(20, "--limit", "-n", help="Max entries to show."),
+):
+    """List past scan/sweep reports."""
+    entries = History().list(limit=limit)
+    if not entries:
+        console.print("[dim]No history yet. Run a scan/sweep with --save.[/]")
+        return
+    table = Table(title="Scan history")
+    table.add_column("ID", style="bold")
+    table.add_column("Kind")
+    table.add_column("When (UTC)")
+    table.add_column("Files", justify="right")
+    table.add_column("Threats", justify="right")
+    table.add_column("Target")
+    for e in entries:
+        threat_cell = f"[red]{e.threats}[/]" if e.threats else "0"
+        table.add_row(e.id, e.kind, e.when.replace("T", " ")[:19], str(e.files_scanned), threat_cell, e.root)
+    console.print(table)
+
+
+@history_app.command("show")
+def history_show(entry_id: str = typer.Argument(..., help="History ID (or prefix).")):
+    """Show the threats from a saved report."""
+    data = History().load(entry_id)
+    if data is None:
+        console.print(f"[red]No history entry matching[/] {entry_id}")
+        raise typer.Exit(2)
+    console.print(f"[bold]{data.get('id')}[/]  kind={data.get('kind')}  target={data.get('root')}")
+    console.print(f"files scanned: {data.get('files_scanned')}  threats: {data.get('threats')}  "
+                  f"duration: {data.get('duration_seconds')}s")
+    threats = [r for r in data.get("results", []) if r.get("verdict", 0) >= int(Severity.MEDIUM)]
+    if not threats:
+        console.print("[green]No threats in this report.[/]")
+        return
+    for r in threats:
+        sev = Severity(r["verdict"])
+        console.print(f"\n[{_style(sev)}] {sev.label}[/] {r['path']}")
+        for f in r.get("findings", []):
+            fsev = Severity(f["severity"])
+            console.print(f"    [{_style(fsev)}]-[/] ({f['engine']}) [bold]{f['name']}[/]: {f['description']}")
+
+
+@history_app.command("prune")
+def history_prune(keep: int = typer.Option(50, "--keep", help="How many recent reports to keep.")):
+    """Delete old history, keeping the most recent N."""
+    removed = History().prune(keep=keep)
+    console.print(f"[green]Pruned {removed} old report(s).[/] Kept {keep}.")
+
+
+# -- schedule subcommands ------------------------------------------------
+@schedule_app.command("add")
+def schedule_add(
+    name: str = typer.Argument(..., help="Unique name for this schedule."),
+    kind: str = typer.Option("sweep", "--kind", help="'sweep' or 'scan'."),
+    target: str = typer.Option("", "--target", help="Path to scan (required for --kind scan)."),
+    frequency: str = typer.Option("daily", "--frequency", "-f", help="hourly | daily | weekly."),
+    at: str = typer.Option("03:00", "--at", help="Time of day HH:MM (24h); ignored for hourly."),
+    quick: bool = typer.Option(False, "--quick", help="Use quick mode (sweep only)."),
+    min_severity: str = typer.Option("low", "--min-severity", help="Report threshold."),
+):
+    """Register a recurring scan with the OS scheduler (writes results to history)."""
+    spec = ScheduleSpec(
+        name=name, kind=kind, target=target, frequency=frequency,
+        time=at, quick=quick, min_severity=min_severity,
+    )
+    try:
+        detail = Scheduler().add(spec)
+    except SchedulerError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
+    console.print(f"[green]Scheduled '{name}'[/] ({kind}, {frequency} at {at}).")
+    console.print(f"[dim]{detail}[/]")
+    console.print(f"[dim]Runs: {' '.join(spec.command_args())}[/]")
+
+
+@schedule_app.command("list")
+def schedule_list():
+    """List Warden's scheduled scans."""
+    specs = Scheduler().list()
+    if not specs:
+        console.print("[dim]No schedules. Add one with 'warden schedule add'.[/]")
+        return
+    table = Table(title="Warden schedules")
+    table.add_column("Name", style="bold")
+    table.add_column("Kind")
+    table.add_column("Frequency")
+    table.add_column("At")
+    table.add_column("Target")
+    for s in specs:
+        table.add_row(s.name, s.kind, s.frequency, s.time if s.frequency != "hourly" else "-", s.target or "-")
+    console.print(table)
+
+
+@schedule_app.command("remove")
+def schedule_remove(name: str = typer.Argument(..., help="Schedule name to remove.")):
+    """Remove a scheduled scan."""
+    try:
+        Scheduler().remove(name)
+    except SchedulerError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
+    console.print(f"[green]Removed schedule[/] {name}")
 
 
 def main():

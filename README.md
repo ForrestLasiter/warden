@@ -49,6 +49,12 @@ warden quarantine list               # see isolated files
 warden quarantine restore <id>       # put one back
 warden quarantine delete <id>        # permanently remove (asks first)
 
+warden history list                  # past scans/sweeps (saved with --save)
+warden history show <id>             # threats from a saved report
+warden schedule add nightly --kind sweep --frequency daily --at 03:00
+warden schedule list                 # your recurring scans
+warden schedule remove nightly
+
 warden update-rules                  # how to add YARA rules & hash feeds
 ```
 
@@ -80,8 +86,9 @@ For the full ClamAV signature set: install ClamAV, run `freshclam`, and Warden p
 - [x] On-demand file/folder scan (YARA + heuristics + hash + ClamAV)
 - [x] Safe, reversible quarantine
 - [x] **System sweep** — auto-scan the high-value spots (startup/autoruns, scheduled tasks, Temp, Downloads, running processes; flags unsigned executables in user-writable locations)
-- [ ] **Scheduled scans** (Windows Task Scheduler / cron integration) with history
-- [ ] **GUI dashboard** — results, threats, history, one-click quarantine (WCAG 2.1 AA)
+- [x] **Scheduled scans** (Windows Task Scheduler / cron integration) with saved history
+- [ ] **GUI dashboard** — results, threats, history, one-click quarantine (WCAG 2.1 AA, light/dark)
+- [ ] Standalone Windows/Linux/macOS binaries on the Releases page
 - [ ] Opt-in online hash reputation lookup
 
 ## Contributing
