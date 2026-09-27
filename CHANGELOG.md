@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-27
+
+### Added
+- Overview **empty state**: before the first scan, the dashboard shows a shield
+  illustration, a short intro, and one-click actions instead of blank cards.
+
+### Changed
+- Regenerated screenshots and the screenshot script's demo path to use a neutral
+  `C:\Users\Public\WardenDemo` location (no personal username in public images).
+
 ## [0.3.2] - 2026-09-27
 
 ### Changed
@@ -68,7 +78,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/ForrestLasiter/warden/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/ForrestLasiter/warden/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ForrestLasiter/warden/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ForrestLasiter/warden/compare/v0.2.0...v0.3.0

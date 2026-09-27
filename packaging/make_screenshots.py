@@ -11,7 +11,8 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8790/"
-SCAN_PATH = sys.argv[2] if len(sys.argv) > 2 else r"C:\Users\forre\AppData\Local\Temp\argus_test"
+# Neutral demo path (no personal username) for public screenshots.
+SCAN_PATH = sys.argv[2] if len(sys.argv) > 2 else r"C:\Users\Public\WardenDemo\samples"
 OUT = Path(__file__).resolve().parent.parent / "docs" / "images"
 OUT.mkdir(parents=True, exist_ok=True)
 

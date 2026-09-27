@@ -83,7 +83,7 @@ tabs.forEach((tab, i) => {
     if (idx !== null) { e.preventDefault(); selectTab(tabs[idx]); }
   });
 });
-$$(".action-tile").forEach((t) => t.addEventListener("click", () => selectTab($("#tab-" + t.dataset.goto), true)));
+$$("[data-goto]").forEach((t) => t.addEventListener("click", () => selectTab($("#tab-" + t.dataset.goto), true)));
 
 /* ---------- engine status + overview ---------- */
 let statusCache = null;
@@ -117,6 +117,11 @@ async function loadOverview() {
     const last = entries[0];
     const quarActive = (quar.entries || []).filter((e) => !e.restored).length;
     const activeCount = status ? status.active.length : 0;
+    const hasHistory = entries.length > 0;
+
+    // Empty state vs populated overview
+    $("#overviewEmpty").hidden = hasHistory;
+    $("#overviewMain").hidden = !hasHistory;
 
     box.innerHTML = "";
     box.append(

@@ -239,6 +239,21 @@ tbody tr:hover { background: var(--surface-2); }
 .empty { color: var(--muted); padding: 28px 0; text-align: center; }
 .empty svg { width: 40px; height: 40px; stroke: var(--border-strong); stroke-width: 1.6; fill: none; display: block; margin: 0 auto 10px; }
 
+/* -- overview empty state -- */
+.empty-state {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 44px 24px 40px; text-align: center;
+  display: flex; flex-direction: column; align-items: center;
+}
+.empty-state h2 { margin: 20px 0 6px; font-size: 1.25rem; }
+.empty-state p { margin: 0 0 22px; color: var(--muted); max-width: 420px; }
+.empty-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.illus { width: 132px; height: 132px; }
+.illus-ring { stroke: var(--border-strong); stroke-width: 2; opacity: .55; }
+.illus-shield { stroke: var(--accent); stroke-width: 3; fill: var(--accent-subtle); stroke-linejoin: round; }
+.illus-check { stroke: var(--accent); stroke-width: 4; fill: none; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.illus-glass { stroke: var(--text); stroke-width: 3.5; fill: var(--surface); stroke-linecap: round; }
+
 /* -- footer -- */
 .site-footer { margin-top: auto; padding: 16px 32px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: .82rem; border-top: 1px solid var(--border); }
 .site-footer a { color: var(--accent); text-decoration: none; }

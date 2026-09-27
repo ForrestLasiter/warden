@@ -72,7 +72,26 @@
         <!-- OVERVIEW -->
         <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0">
           <div id="overviewStats" class="stat-grid" aria-live="polite"></div>
-          <div class="two-col">
+
+          <!-- Empty state (before the first scan) -->
+          <div id="overviewEmpty" class="empty-state" hidden>
+            <svg class="illus" viewBox="0 0 160 160" fill="none" aria-hidden="true" focusable="false">
+              <circle class="illus-ring" cx="80" cy="80" r="66" stroke-dasharray="4 8"/>
+              <path class="illus-shield" d="M80 26 L120 40 V78 C120 108 102 126 80 134 C58 126 40 108 40 78 V40 Z"/>
+              <path class="illus-check" d="M64 82 L75 93 L98 68" />
+              <circle class="illus-glass" cx="108" cy="106" r="17"/>
+              <line class="illus-glass" x1="120" y1="118" x2="132" y2="130"/>
+            </svg>
+            <h2>Ready when you are</h2>
+            <p>Run your first scan and your results, history, and any threats will show up here.</p>
+            <div class="empty-actions">
+              <button type="button" class="btn btn-primary" data-goto="scan">Scan a folder</button>
+              <button type="button" class="btn" data-goto="sweep">Run a system sweep</button>
+            </div>
+          </div>
+
+          <!-- Populated state -->
+          <div id="overviewMain" class="two-col" hidden>
             <div class="card">
               <div class="card-head"><h2>Quick actions</h2></div>
               <div class="quick-actions">
