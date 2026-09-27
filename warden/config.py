@@ -11,10 +11,21 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 from .models import default_data_dir
+from .storage import atomic_write_json, secure_dir
 
 # Files larger than this are hashed but not deep-scanned by content engines
 # (YARA/heuristics), to keep full-drive scans fast. Override in config.
 DEFAULT_MAX_SCAN_BYTES = 100 * 1024 * 1024  # 100 MB
+MIN_SCAN_BYTES = 64 * 1024               # 64 KB floor
+MAX_SCAN_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB ceiling
+
+
+def _clamp_int(value, default: int, lo: int, hi: int) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, n))
 
 # Extensions worth deep content scanning. Everything still gets hashed.
 # Empty set here means "scan everything"; we instead skip a known-huge/binary
@@ -57,8 +68,11 @@ class Config:
         return self.data_dir / "config.json"
 
     def ensure_dirs(self) -> None:
-        for p in (self.data_dir, self.quarantine_dir, self.history_dir,
-                  self.rules_user_dir, self.cache_dir):
+        # The data dir can hold the VirusTotal key and quarantined malware, so
+        # restrict it to the owner on POSIX (best-effort; no-op on Windows).
+        secure_dir(self.data_dir)
+        secure_dir(self.quarantine_dir)
+        for p in (self.history_dir, self.rules_user_dir, self.cache_dir):
             p.mkdir(parents=True, exist_ok=True)
 
     # Persistence ---------------------------------------------------------
@@ -66,18 +80,25 @@ class Config:
     def load(cls, data_dir: Path | None = None) -> "Config":
         cfg = cls(data_dir=data_dir or default_data_dir())
         path = cfg.config_path
-        if path.exists():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                raw = {}
-            cfg.max_scan_bytes = int(raw.get("max_scan_bytes", cfg.max_scan_bytes))
-            cfg.follow_symlinks = bool(raw.get("follow_symlinks", cfg.follow_symlinks))
-            cfg.use_clamav = bool(raw.get("use_clamav", cfg.use_clamav))
-            cfg.online_hash_lookup = bool(raw.get("online_hash_lookup", cfg.online_hash_lookup))
-            cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key))
-            if "skip_extensions" in raw:
-                cfg.skip_extensions = {e.lower() for e in raw["skip_extensions"]}
+        if not path.exists():
+            return cfg
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        # Every field is validated/coerced with a fallback so a malformed or
+        # hostile config.json can never crash Warden or set a pathological limit.
+        cfg.max_scan_bytes = _clamp_int(
+            raw.get("max_scan_bytes"), cfg.max_scan_bytes, MIN_SCAN_BYTES, MAX_SCAN_BYTES)
+        cfg.follow_symlinks = bool(raw.get("follow_symlinks", cfg.follow_symlinks))
+        cfg.use_clamav = bool(raw.get("use_clamav", cfg.use_clamav))
+        cfg.online_hash_lookup = bool(raw.get("online_hash_lookup", cfg.online_hash_lookup))
+        cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key) or "")
+        exts = raw.get("skip_extensions")
+        if isinstance(exts, (list, tuple, set)):
+            cfg.skip_extensions = {str(e).lower() for e in exts if isinstance(e, str)}
         return cfg
 
     def save(self) -> None:
@@ -90,7 +111,8 @@ class Config:
             "virustotal_api_key": self.virustotal_api_key,
             "skip_extensions": sorted(self.skip_extensions),
         }
-        self.config_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # Atomic + owner-only (the file can contain the VirusTotal API key).
+        atomic_write_json(self.config_path, data, mode=0o600)
 
 
 # Rules bundled with the package (read-only, shipped with Warden).

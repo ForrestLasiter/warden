@@ -36,9 +36,9 @@ _TOKEN = secrets.token_urlsafe(24)
 _MAX_BODY = 1 * 1024 * 1024        # 1 MiB cap on request bodies
 _MAX_ACTIVE_JOBS = 2               # concurrent scan/sweep jobs
 _MAX_TRACKED_JOBS = 25            # keep this many finished jobs for quarantine lookups
-# Valid history entry ids look like "20260927T080130Z_scan"; anything else is
-# rejected so a client can't build a path/glob that escapes the history dir.
-_HISTORY_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z_(scan|sweep)$")
+# Valid history entry ids look like "20260927T080130123456Z_scan"; anything else
+# is rejected so a client can't build a path/glob that escapes the history dir.
+_HISTORY_ID_RE = re.compile(r"^[0-9]{8}T[0-9]+Z_(scan|sweep)$")
 
 
 class JobManager:

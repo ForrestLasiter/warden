@@ -1,23 +1,29 @@
 """Quarantine: isolate suspicious files safely and reversibly.
 
 Design goals:
-  * Never permanently delete on the user's behalf (that's a Prohibited action).
-  * The stored copy must not be runnable, so a quarantined executable can't be
-    launched by accident. We XOR every byte with a fixed key - trivial to
-    reverse on restore, but the blob is no longer a valid PE/script.
-  * Every action is recorded so it can be undone.
+  * Never permanently delete on the user's behalf without explicit confirmation.
+  * Never lose the user's file. The durable ordering is: write the neutralized
+    blob (fsync), write the metadata sidecar (fsync), update the index, and only
+    THEN delete the original. A crash at any point leaves either the untouched
+    original or a fully-recorded quarantine entry - never a gap where the file
+    is gone but unrecorded.
+  * The stored copy must not run by accident. We XOR every byte with a fixed key
+    and store it as ``<id>.qbin``. This is obfuscation to prevent accidental
+    execution / AV re-detection, NOT encryption - it is trivially reversible.
 
-Layout under ~/.warden/quarantine/:
-    index.json                  -> list of entries
-    <id>.qbin                   -> neutralized file bytes
-    <id>.json                   -> per-entry metadata (also in index)
+Layout under ~/.warden/quarantine/ (created 0o700 on POSIX):
+    <id>.qbin   -> neutralized file bytes (0o600)
+    <id>.json   -> per-entry metadata; the source of truth
+    index.json  -> a cache of all entries, rebuildable from the sidecars
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import shutil
+import stat
+import tempfile
 import uuid
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
@@ -25,9 +31,10 @@ from typing import Any
 
 from .config import Config
 from .models import FileResult, now_iso
+from .storage import atomic_write_json, fsync_dir, secure_dir
 
 # Fixed XOR key used to neutralize stored bytes. Not secret - its only job is to
-# ensure the quarantined copy isn't directly executable.
+# ensure the quarantined copy isn't a directly runnable PE/script.
 _XOR_KEY = 0x5A
 
 
@@ -47,68 +54,109 @@ class QuarantineEntry:
         return asdict(self)
 
 
+class QuarantineError(Exception):
+    pass
+
+
 class Quarantine:
     def __init__(self, config: Config | None = None):
         self.config = config or Config.load()
         self.config.ensure_dirs()
-        self.dir = self.config.quarantine_dir
+        self.dir = secure_dir(self.config.quarantine_dir)
         self.index_path = self.dir / "index.json"
 
     # -- index io ---------------------------------------------------------
     def _load_index(self) -> list[dict[str, Any]]:
-        if not self.index_path.exists():
-            return []
-        try:
-            return json.loads(self.index_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
+        if self.index_path.exists():
+            try:
+                data = json.loads(self.index_path.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, OSError):
+                pass
+        # Missing or corrupt index -> rebuild from the per-entry sidecars so a
+        # damaged index never makes quarantined files "disappear".
+        return self._rebuild_index()
+
+    def _rebuild_index(self) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for jf in sorted(self.dir.glob("*.json")):
+            if jf.name == "index.json":
+                continue
+            try:
+                entries.append(json.loads(jf.read_text(encoding="utf-8")))
+            except (json.JSONDecodeError, OSError):
+                continue
+        if entries:
+            self._save_index(entries)
+        return entries
 
     def _save_index(self, entries: list[dict[str, Any]]) -> None:
-        self.index_path.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+        atomic_write_json(self.index_path, entries, mode=0o600)
 
     def list_entries(self) -> list[QuarantineEntry]:
         return [QuarantineEntry(**e) for e in self._load_index()]
 
     # -- actions ----------------------------------------------------------
     def quarantine_file(self, result: FileResult) -> QuarantineEntry:
-        """Move a flagged file into quarantine, neutralized. Removes the original."""
+        """Neutralize + isolate the file, then remove the original (last)."""
         src = Path(result.path)
+
+        # Re-validate before doing anything destructive (TOCTOU / symlink).
+        try:
+            st = src.lstat()
+        except OSError as exc:
+            raise QuarantineError(f"cannot access {src}: {exc}") from exc
+        if stat.S_ISLNK(st.st_mode):
+            raise QuarantineError(f"refusing to quarantine a symlink: {src}")
+        if not stat.S_ISREG(st.st_mode):
+            raise QuarantineError(f"refusing to quarantine a non-regular file: {src}")
+        if result.sha256:
+            current = _sha256_of(src)
+            if current is not None and current != result.sha256:
+                raise QuarantineError(
+                    f"{src} changed since it was scanned; not quarantining")
+
         entry_id = uuid.uuid4().hex[:16]
         blob_path = self.dir / f"{entry_id}.qbin"
+        sidecar = self.dir / f"{entry_id}.json"
 
-        # Copy+neutralize into quarantine first, then remove the original, so a
-        # failure never loses the file.
-        _xor_copy(src, blob_path)
+        # Read the current index BEFORE writing our sidecar, otherwise the
+        # rebuild-from-sidecars path would see the new sidecar and we'd append a
+        # duplicate.
+        index = self._load_index()
+
+        # 1. neutralized blob, durably.
+        _xor_copy_atomic(src, blob_path, mode=0o600)
 
         entry = QuarantineEntry(
             id=entry_id,
             original_path=str(src.resolve()),
             quarantined_at=now_iso(),
-            size=result.size,
+            size=st.st_size,
             sha256=result.sha256,
             verdict=result.verdict.label,
             findings=[f.to_dict() for f in result.findings],
         )
 
-        # Remove the live copy now that a neutralized backup exists.
+        # 2. sidecar (source of truth) + 3. index, both durable.
+        atomic_write_json(sidecar, entry.to_dict(), mode=0o600)
+        index.append(entry.to_dict())
+        self._save_index(index)
+
+        # 4. remove the original LAST. If this fails, roll the record back so we
+        #    never claim to have quarantined a file that's still in place.
         try:
             os.remove(src)
         except OSError as exc:
-            # Roll back: we couldn't remove the original, so drop the blob and
-            # surface the problem rather than leaving a half-done state.
             blob_path.unlink(missing_ok=True)
+            sidecar.unlink(missing_ok=True)
+            self._save_index([e for e in self._load_index() if e["id"] != entry_id])
             raise QuarantineError(f"could not remove original {src}: {exc}") from exc
-
-        index = self._load_index()
-        index.append(entry.to_dict())
-        self._save_index(index)
-        (self.dir / f"{entry_id}.json").write_text(
-            json.dumps(entry.to_dict(), indent=2), encoding="utf-8"
-        )
         return entry
 
-    def restore(self, entry_id: str, dest: Path | None = None) -> Path:
-        """Restore a quarantined file to its original location (or ``dest``)."""
+    def restore(self, entry_id: str, dest: Path | None = None, *, force: bool = False) -> Path:
+        """Restore a quarantined file, refusing to clobber or follow symlinks."""
         index = self._load_index()
         match = next((e for e in index if e["id"] == entry_id), None)
         if match is None:
@@ -117,12 +165,27 @@ class Quarantine:
         if not blob_path.exists():
             raise QuarantineError(f"quarantined data missing for {entry_id}")
 
-        target = dest or Path(match["original_path"])
+        target = Path(dest) if dest else Path(match["original_path"])
+
+        # Refuse to write through a symlink anywhere on the path (arbitrary write)
+        # or to overwrite an existing file unless the caller explicitly forces it.
+        for p in [target, *target.parents]:
+            if p.is_symlink():
+                raise QuarantineError(f"refusing to restore through a symlink: {p}")
+        if target.exists() and not force:
+            raise QuarantineError(
+                f"{target} already exists; refusing to overwrite (use force to override)")
+
         target.parent.mkdir(parents=True, exist_ok=True)
-        _xor_copy(blob_path, target)
+        _xor_copy_atomic(blob_path, target)
 
         match["restored"] = True
         match["restored_at"] = now_iso()
+        # keep the sidecar consistent with the index
+        try:
+            atomic_write_json(self.dir / f"{entry_id}.json", match, mode=0o600)
+        except OSError:
+            pass
         self._save_index(index)
         return target
 
@@ -137,13 +200,37 @@ class Quarantine:
         self._save_index(remaining)
 
 
-class QuarantineError(Exception):
-    pass
+# -- helpers -------------------------------------------------------------
+def _sha256_of(path: Path) -> str | None:
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
 
 
-def _xor_copy(src: Path, dst: Path, key: int = _XOR_KEY) -> None:
-    """Stream-copy src -> dst, XOR-ing every byte with key (self-inverse)."""
+def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | None = None) -> None:
+    """Stream-copy src -> dst, XOR-ing every byte, written atomically + fsync'd."""
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
     tbl = bytes(b ^ key for b in range(256))
-    with open(src, "rb") as fin, open(dst, "wb") as fout:
-        for chunk in iter(lambda: fin.read(1024 * 1024), b""):
-            fout.write(chunk.translate(tbl))
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".qtmp-")
+    try:
+        with os.fdopen(fd, "wb") as fout, open(src, "rb") as fin:
+            for chunk in iter(lambda: fin.read(1024 * 1024), b""):
+                fout.write(chunk.translate(tbl))
+            fout.flush()
+            os.fsync(fout.fileno())
+        if mode is not None and os.name != "nt":
+            os.chmod(tmp, mode)
+        os.replace(tmp, dst)
+        fsync_dir(dst.parent)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

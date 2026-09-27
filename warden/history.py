@@ -41,11 +41,14 @@ class History:
         self.dir = self.config.history_dir
 
     def save(self, report: ScanReport, *, kind: str = "scan") -> HistoryEntry:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        # Sub-second precision so rapid successive saves don't overwrite each
+        # other (whole-second names collided and silently lost history).
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         entry_id = f"{ts}_{kind}"
         out = self.dir / f"{entry_id}.json"
         payload = {"id": entry_id, "kind": kind, **report.to_dict()}
-        out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        from .storage import atomic_write_json
+        atomic_write_json(out, payload)
         return HistoryEntry(
             id=entry_id, kind=kind, when=report.finished or report.started,
             root=report.root, files_scanned=report.files_scanned,

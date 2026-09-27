@@ -35,6 +35,11 @@ _CYMRU_HOST = "malware.hash.cymru.com"
 _DOH_URL = "https://cloudflare-dns.com/dns-query"
 _VT_URL = "https://www.virustotal.com/api/v3/files/"
 
+# Cache TTLs. A "not known / clean" answer must expire fairly soon so a file
+# that is later classified as malware isn't masked forever by a stale negative.
+_NEG_TTL = 24 * 3600            # unknown/clean
+_POS_TTL = 30 * 24 * 3600       # known-malware (rarely changes)
+
 
 @dataclass(slots=True)
 class ReputationResult:
@@ -88,8 +93,9 @@ class OnlineReputation:
             return {}
 
     def _save_cache(self) -> None:
+        from .storage import atomic_write_json
         try:
-            self.cache_path.write_text(json.dumps(self._cache, indent=0), encoding="utf-8")
+            atomic_write_json(self.cache_path, self._cache, indent=0)
         except OSError:
             pass
 
@@ -100,9 +106,14 @@ class OnlineReputation:
         key = f"{self.provider}:{sha256 or sha1}"
         if key in self._mem:
             return self._mem[key]
-        if key in self._cache:
-            c = self._cache[key]
-            res = ReputationResult(**c)
+        cached = self._cache.get(key)
+        if cached and not _cache_expired(cached):
+            res = ReputationResult(
+                known=bool(cached.get("known")),
+                malicious=bool(cached.get("malicious")),
+                source=str(cached.get("source", self.provider)),
+                detections=str(cached.get("detections", "")),
+            )
             self._mem[key] = res
             return res
         if self._budget <= 0:
@@ -130,9 +141,18 @@ class OnlineReputation:
             self._cache[key] = {
                 "known": res.known, "malicious": res.malicious,
                 "source": res.source, "detections": res.detections,
+                "ts": time.time(),
             }
             self._save_cache()
         return res
+
+
+def _cache_expired(entry: dict) -> bool:
+    ts = entry.get("ts")
+    if not isinstance(ts, (int, float)):
+        return True  # legacy entry without a timestamp -> re-query
+    ttl = _POS_TTL if entry.get("malicious") else _NEG_TTL
+    return (time.time() - ts) > ttl
 
 
 # -- providers -----------------------------------------------------------
