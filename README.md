@@ -1,5 +1,9 @@
 # Warden
 
+[![CI](https://github.com/ForrestLasiter/warden/actions/workflows/ci.yml/badge.svg)](https://github.com/ForrestLasiter/warden/actions/workflows/ci.yml)
+[![Release binaries](https://github.com/ForrestLasiter/warden/actions/workflows/release.yml/badge.svg)](https://github.com/ForrestLasiter/warden/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **Open-source, on-demand malware scanner for Windows/Linux/macOS.** No subscription, no telemetry, no lock-in. Warden stands on the shoulders of the open-source giants — [YARA](https://virustotal.github.io/yara/) rules and (optionally) [ClamAV](https://www.clamav.net/) — and adds structural heuristics and hash reputation, wrapped in a clean CLI (GUI coming).
 
 > A warden guards what matters. Warden keeps watch over your filesystem.
@@ -7,6 +11,18 @@
 Warden is an **on-demand scanner**: you point it at a file, folder, or your whole drive and it tells you what's suspicious. It is *not* a real-time resident AV and is **not a replacement for Windows Defender** (which is free and built into Windows 11 — keep it on). Think of Warden as a second opinion you fully own and control.
 
 ---
+
+## Download
+
+Grab a standalone binary from the [**Releases**](https://github.com/ForrestLasiter/warden/releases) page — no Python needed:
+
+| Platform | File |
+| --- | --- |
+| Windows x64 | `warden-windows-x64.exe` |
+| Linux x64 | `warden-linux-x64` |
+| macOS (Apple Silicon) | `warden-macos-arm64` |
+
+On Linux/macOS, `chmod +x warden-*` then run it. On Windows, SmartScreen may warn about an unsigned binary the first time (Warden is unsigned; the source is right here). Prefer to run from source? See **Install (dev)** below.
 
 ## What it detects
 
