@@ -96,10 +96,7 @@ class YaraEngine:
             scanner = yara_x.Scanner(self._rules)
             results = scanner.scan(data)
         except Exception as exc:  # noqa: BLE001
-            return [Finding(
-                engine=self.name, name="scan-error", severity=Severity.INFO,
-                description=f"YARA scan error: {exc}",
-            )]
+            return [Finding.engine_error(self.name, f"YARA scan error: {exc!r}")]
 
         findings: list[Finding] = []
         for rule in results.matching_rules:

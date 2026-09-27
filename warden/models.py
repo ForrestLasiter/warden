@@ -65,6 +65,18 @@ class Finding:
             meta=d.get("meta", {}) or {},
         )
 
+    @classmethod
+    def engine_error(cls, engine: str, description: str) -> "Finding":
+        """A finding that marks an engine as having FAILED on this file.
+
+        The ``engine_error`` meta flag lets the scanner treat the file as
+        'unknown' (never silently 'clean') and set a non-zero exit code.
+        """
+        return cls(
+            engine=engine, name="engine-error", severity=Severity.INFO,
+            description=description, meta={"engine_error": True},
+        )
+
 
 @dataclass(slots=True)
 class FileResult:
@@ -87,6 +99,22 @@ class FileResult:
     def is_threat(self) -> bool:
         return self.verdict >= Severity.MEDIUM
 
+    @property
+    def errored(self) -> bool:
+        """True if a detection engine failed on this file (fail-safe signal)."""
+        return self.error is not None or any(
+            f.meta.get("engine_error") for f in self.findings
+        )
+
+    @property
+    def status(self) -> str:
+        """clean | threat | unknown — 'unknown' means an engine couldn't finish."""
+        if self.is_threat:
+            return "threat"
+        if self.errored:
+            return "unknown"
+        return "clean"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "path": self.path,
@@ -94,6 +122,8 @@ class FileResult:
             "sha256": self.sha256,
             "scanned": self.scanned,
             "error": self.error,
+            "errored": self.errored,
+            "status": self.status,
             "verdict": int(self.verdict),
             "verdict_label": self.verdict.label,
             "findings": [f.to_dict() for f in self.findings],
@@ -130,6 +160,15 @@ class ScanReport:
         return [r for r in self.results if r.is_threat]
 
     @property
+    def unknown(self) -> list[FileResult]:
+        """Files where an engine failed — inconclusive, not clean."""
+        return [r for r in self.results if r.errored and not r.is_threat]
+
+    @property
+    def engine_errors(self) -> int:
+        return sum(1 for r in self.results if r.errored)
+
+    @property
     def duration_seconds(self) -> float | None:
         if not self.finished:
             return None
@@ -156,6 +195,8 @@ class ScanReport:
             "engines": self.engines,
             "counts_by_verdict": self.counts_by_verdict(),
             "threats": len(self.threats),
+            "unknown": len(self.unknown),
+            "engine_errors": self.engine_errors,
             "results": [r.to_dict() for r in self.results],
         }
 

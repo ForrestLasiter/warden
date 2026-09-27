@@ -170,8 +170,5 @@ def _safe_scandir(path: Path):
 
 
 def _engine_error(engine: str, exc: Exception):
-    from .models import Finding, Severity
-    return Finding(
-        engine=engine, name="engine-error", severity=Severity.INFO,
-        description=f"{engine} raised: {exc}",
-    )
+    from .models import Finding
+    return Finding.engine_error(engine, f"{engine} raised: {exc!r}")

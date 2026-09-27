@@ -51,20 +51,31 @@ class ScanContext:
         return self._data
 
     def _compute_digests(self) -> None:
-        """Stream the file once, computing SHA-256 and SHA-1 together."""
+        """Compute SHA-256 and SHA-1, reusing the content buffer when possible."""
         if self._digests_done:
             return
-        s256 = hashlib.sha256()
-        s1 = hashlib.sha1()
-        try:
-            with open(self.path, "rb") as fh:
-                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                    s256.update(chunk)
-                    s1.update(chunk)
-            self._sha256 = s256.hexdigest()
-            self._sha1 = s1.hexdigest()
-        except OSError as exc:
-            self._read_error = str(exc)
+        if self.size <= self.max_read:
+            # Small enough to hold in memory: read ONCE (the same buffer content
+            # engines will scan) and hash exactly those bytes, so the recorded
+            # hash always matches what was scanned -> a consistent snapshot.
+            buf = self.data()
+            if self._read_error is None:
+                self._sha256 = hashlib.sha256(buf).hexdigest()
+                self._sha1 = hashlib.sha1(buf).hexdigest()
+        else:
+            # Too large to buffer: stream the whole file for a true full-file
+            # hash. Content engines see only the first max_read bytes (data()).
+            s256 = hashlib.sha256()
+            s1 = hashlib.sha1()
+            try:
+                with open(self.path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        s256.update(chunk)
+                        s1.update(chunk)
+                self._sha256 = s256.hexdigest()
+                self._sha1 = s1.hexdigest()
+            except OSError as exc:
+                self._read_error = str(exc)
         self._digests_done = True
 
     def sha256(self) -> str | None:

@@ -156,9 +156,7 @@ def scan(
     if quarantine and threats:
         _do_quarantine(threats)
 
-    # Exit code reflects the worst verdict, useful for scripts/scheduling.
-    worst = max((r.verdict for r in report.results), default=Severity.CLEAN)
-    raise typer.Exit(1 if worst >= Severity.MEDIUM else 0)
+    raise typer.Exit(_scan_exit_code(report))
 
 
 @app.command()
@@ -234,8 +232,7 @@ def sweep(
     if quarantine and flagged:
         _do_quarantine(flagged)
 
-    worst = max((r.verdict for r in report.results), default=Severity.CLEAN)
-    raise typer.Exit(1 if worst >= Severity.MEDIUM else 0)
+    raise typer.Exit(_scan_exit_code(report))
 
 
 def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
@@ -255,17 +252,37 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
                 continue
             console.print(f"    [{_style(f.severity)}]-[/] ({f.engine}) [bold]{f.name}[/]: {f.description}")
 
+    # Surface files an engine could not finish on - these are 'unknown', NOT clean.
+    unknown = report.unknown
+    if unknown and not quiet:
+        for r in unknown:
+            console.print(f"[yellow]? UNKNOWN [/] {r.path} [dim](an engine could not scan this file)[/]")
+
     dur = report.duration_seconds or 0.0
     summary = Table.grid(padding=(0, 2))
     summary.add_row("Files scanned:", str(report.files_scanned))
     summary.add_row("Skipped (size/type):", str(report.files_skipped))
     summary.add_row("Threats (medium+):", f"[red]{len(report.threats)}[/]" if report.threats else "0")
+    summary.add_row("Unknown (engine error):", f"[yellow]{len(unknown)}[/]" if unknown else "0")
     summary.add_row("Findings shown:", str(shown))
-    summary.add_row("Errors:", str(report.errors))
+    summary.add_row("Read/access errors:", str(report.errors))
     summary.add_row("Duration:", f"{dur:.1f}s")
-    verdict_color = "red" if report.threats else "green"
-    title = "THREATS FOUND" if report.threats else "CLEAN"
+    if report.threats:
+        verdict_color, title = "red", "THREATS FOUND"
+    elif unknown or report.errors:
+        verdict_color, title = "yellow", "COMPLETED WITH ERRORS"
+    else:
+        verdict_color, title = "green", "CLEAN"
     console.print(Panel(summary, title=f"[{verdict_color}]{title}[/]", border_style=verdict_color))
+
+
+def _scan_exit_code(report: ScanReport) -> int:
+    """0 = clean, 1 = threat(s) found, 2 = a file could not be fully scanned."""
+    if report.threats:
+        return 1
+    if report.engine_errors or report.errors:
+        return 2
+    return 0
 
 
 def _do_quarantine(threats: list[FileResult]):

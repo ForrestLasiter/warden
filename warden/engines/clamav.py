@@ -54,10 +54,7 @@ class ClamAVEngine:
                 cmd, capture_output=True, text=True, timeout=120,
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
-            return [Finding(
-                engine=self.name, name="scan-error", severity=Severity.INFO,
-                description=f"ClamAV invocation failed: {exc}",
-            )]
+            return [Finding.engine_error(self.name, f"ClamAV invocation failed: {exc!r}")]
 
         # Exit codes: 0 = clean, 1 = virus found, 2 = error.
         if proc.returncode == 1:
@@ -69,6 +66,12 @@ class ClamAVEngine:
                 description=f"ClamAV signature match: {sig or 'unknown'}",
                 meta={"raw": proc.stdout.strip()[:400]},
             )]
+        if proc.returncode != 0:
+            # rc 2 (or anything else) means ClamAV could not scan the file - a
+            # failure, NOT a clean result. Surface it so the file is 'unknown'.
+            detail = (proc.stderr or proc.stdout or "").strip()[:200]
+            return [Finding.engine_error(
+                self.name, f"ClamAV error (exit {proc.returncode}): {detail}")]
         return []
 
 
