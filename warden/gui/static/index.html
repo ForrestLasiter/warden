@@ -12,117 +12,176 @@
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
 
-  <header class="topbar" id="top">
-    <div class="brand">
-      <svg class="brand-mark" width="30" height="30" viewBox="0 0 64 64" fill="none" aria-hidden="true" focusable="false">
-        <defs>
-          <linearGradient id="brandShield" x1="32" y1="4" x2="32" y2="60" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#3b8eea"/><stop offset="1" stop-color="#1a56b3"/>
-          </linearGradient>
-        </defs>
-        <path d="M32 4 L56 12 V30 C56 46 46 55 32 60 C18 55 8 46 8 30 V12 Z" fill="url(#brandShield)"/>
-        <path d="M21 32.5 L28.5 40 L44 23" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span class="brand-name">Warden</span>
-      <span class="brand-tag">malware scanner</span>
-    </div>
-    <div class="topbar-right">
-      <p class="engine-status" id="engineStatus" aria-live="polite">Checking engines…</p>
-      <div class="theme-switch" role="group" aria-label="Color theme">
-        <button type="button" class="theme-btn" data-theme-choice="light" aria-pressed="false">Light</button>
-        <button type="button" class="theme-btn" data-theme-choice="dark" aria-pressed="false">Dark</button>
-        <button type="button" class="theme-btn" data-theme-choice="system" aria-pressed="true">System</button>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <svg class="brand-mark" width="28" height="28" viewBox="0 0 64 64" fill="none" aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="brandShield" x1="32" y1="4" x2="32" y2="60" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#3b8eea"/><stop offset="1" stop-color="#1a56b3"/>
+            </linearGradient>
+          </defs>
+          <path d="M32 4 L56 12 V30 C56 46 46 55 32 60 C18 55 8 46 8 30 V12 Z" fill="url(#brandShield)"/>
+          <path d="M21 32.5 L28.5 40 L44 23" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="brand-name">Warden</span>
       </div>
-    </div>
-  </header>
 
-  <nav class="tabs" aria-label="Sections">
-    <div role="tablist" aria-label="Warden sections" id="tablist">
-      <button role="tab" id="tab-scan" aria-selected="true" aria-controls="panel-scan" tabindex="0">Scan</button>
-      <button role="tab" id="tab-sweep" aria-selected="false" aria-controls="panel-sweep" tabindex="-1">System sweep</button>
-      <button role="tab" id="tab-history" aria-selected="false" aria-controls="panel-history" tabindex="-1">History</button>
-      <button role="tab" id="tab-quarantine" aria-selected="false" aria-controls="panel-quarantine" tabindex="-1">Quarantine</button>
-    </div>
-  </nav>
+      <nav class="nav" role="tablist" aria-orientation="vertical" aria-label="Sections">
+        <button role="tab" id="tab-overview" aria-selected="true" aria-controls="panel-overview" tabindex="0" class="nav-item">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Overview</span>
+        </button>
+        <button role="tab" id="tab-scan" aria-selected="false" aria-controls="panel-scan" tabindex="-1" class="nav-item">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>Scan</span>
+        </button>
+        <button role="tab" id="tab-sweep" aria-selected="false" aria-controls="panel-sweep" tabindex="-1" class="nav-item">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="0.6" fill="currentColor"/></svg>
+          <span>System sweep</span>
+        </button>
+        <button role="tab" id="tab-history" aria-selected="false" aria-controls="panel-history" tabindex="-1" class="nav-item">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg>
+          <span>History</span>
+        </button>
+        <button role="tab" id="tab-quarantine" aria-selected="false" aria-controls="panel-quarantine" tabindex="-1" class="nav-item">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          <span>Quarantine</span>
+        </button>
+      </nav>
 
-  <main id="main" tabindex="-1">
-    <!-- SCAN -->
-    <section role="tabpanel" id="panel-scan" aria-labelledby="tab-scan" tabindex="0">
-      <h1>Scan a file or folder</h1>
-      <form id="scanForm" class="controls">
-        <div class="field field-grow">
-          <label for="scanPath">Path to scan</label>
-          <input type="text" id="scanPath" name="path" autocomplete="off" spellcheck="false"
-                 placeholder="e.g. C:\Users\you\Downloads" required>
+      <div class="sidebar-foot">
+        <div class="theme-switch" role="group" aria-label="Color theme">
+          <button type="button" class="theme-btn" data-theme-choice="light" aria-pressed="false" title="Light">Light</button>
+          <button type="button" class="theme-btn" data-theme-choice="dark" aria-pressed="false" title="Dark">Dark</button>
+          <button type="button" class="theme-btn" data-theme-choice="system" aria-pressed="true" title="System">Auto</button>
         </div>
-        <div class="field">
-          <label for="scanSeverity">Report level</label>
-          <select id="scanSeverity" name="min_severity">
-            <option value="info">Info and up</option>
-            <option value="low" selected>Low and up</option>
-            <option value="medium">Medium and up</option>
-            <option value="high">High and up</option>
-          </select>
-        </div>
-        <div class="field field-end">
-          <button type="submit" class="btn btn-primary" id="scanBtn">Start scan</button>
-        </div>
-      </form>
-      <div class="field field-check scan-online">
-        <input type="checkbox" id="scanOnline" name="online">
-        <label for="scanOnline">Check hashes online (opt-in — sends file hashes, not files, to a reputation service)</label>
+        <p class="sidebar-version" id="footerVersion">Warden</p>
       </div>
-      <div id="scanProgress" class="progress-wrap" hidden></div>
-      <div id="scanResults" class="results" aria-live="polite"></div>
-    </section>
+    </aside>
 
-    <!-- SWEEP -->
-    <section role="tabpanel" id="panel-sweep" aria-labelledby="tab-sweep" tabindex="0" hidden>
-      <h1>System sweep</h1>
-      <p class="lede">Automatically scan the spots malware hides: startup entries, running
-        processes, scheduled tasks, Temp, and Downloads.</p>
-      <form id="sweepForm" class="controls">
-        <div class="field field-check">
-          <input type="checkbox" id="sweepQuick" name="quick">
-          <label for="sweepQuick">Quick mode (top-level temp/downloads, executables only)</label>
-        </div>
-        <div class="field field-end">
-          <button type="submit" class="btn btn-primary" id="sweepBtn">Run sweep</button>
-        </div>
-      </form>
-      <div id="sweepCategories" class="categories" aria-live="polite"></div>
-      <div id="sweepProgress" class="progress-wrap" hidden></div>
-      <div id="sweepResults" class="results" aria-live="polite"></div>
-    </section>
+    <!-- Content -->
+    <div class="content">
+      <header class="topbar">
+        <h1 id="pageTitle">Overview</h1>
+        <p class="engine-status" id="engineStatus" aria-live="polite">Checking engines…</p>
+      </header>
 
-    <!-- HISTORY -->
-    <section role="tabpanel" id="panel-history" aria-labelledby="tab-history" tabindex="0" hidden>
-      <h1>Scan history</h1>
-      <div id="historyList" class="results" aria-live="polite"></div>
-    </section>
+      <main id="main" tabindex="-1">
+        <!-- OVERVIEW -->
+        <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0">
+          <div id="overviewStats" class="stat-grid" aria-live="polite"></div>
+          <div class="two-col">
+            <div class="card">
+              <div class="card-head"><h2>Quick actions</h2></div>
+              <div class="quick-actions">
+                <button type="button" class="action-tile" data-goto="scan">
+                  <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                  <span><strong>Scan a folder</strong><small>Point Warden at a path</small></span>
+                </button>
+                <button type="button" class="action-tile" data-goto="sweep">
+                  <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/></svg>
+                  <span><strong>System sweep</strong><small>Auto-scan where malware hides</small></span>
+                </button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-head"><h2>Recent activity</h2></div>
+              <div id="overviewRecent" class="recent"></div>
+            </div>
+          </div>
+        </section>
 
-    <!-- QUARANTINE -->
-    <section role="tabpanel" id="panel-quarantine" aria-labelledby="tab-quarantine" tabindex="0" hidden>
-      <h1>Quarantine</h1>
-      <p class="lede">Isolated files. Restoring puts a file back where it was; deleting removes
-        it permanently.</p>
-      <div id="quarantineList" class="results" aria-live="polite"></div>
-    </section>
-  </main>
+        <!-- SCAN -->
+        <section role="tabpanel" id="panel-scan" aria-labelledby="tab-scan" tabindex="0" hidden>
+          <div class="card">
+            <div class="card-head"><h2>Scan a file or folder</h2></div>
+            <form id="scanForm" class="controls">
+              <div class="field field-grow">
+                <label for="scanPath">Path to scan</label>
+                <input type="text" id="scanPath" name="path" autocomplete="off" spellcheck="false"
+                       placeholder="e.g. C:\Users\you\Downloads" required>
+              </div>
+              <div class="field">
+                <label for="scanSeverity">Report level</label>
+                <select id="scanSeverity" name="min_severity">
+                  <option value="info">Info and up</option>
+                  <option value="low" selected>Low and up</option>
+                  <option value="medium">Medium and up</option>
+                  <option value="high">High and up</option>
+                </select>
+              </div>
+              <div class="field field-end">
+                <button type="submit" class="btn btn-primary" id="scanBtn">Start scan</button>
+              </div>
+            </form>
+            <div class="field-check scan-online">
+              <input type="checkbox" id="scanOnline" name="online">
+              <label for="scanOnline">Check hashes online (opt-in — sends file hashes, not files, to a reputation service)</label>
+            </div>
+          </div>
+          <div id="scanProgress" class="progress-wrap" hidden></div>
+          <div id="scanResults" class="results" aria-live="polite"></div>
+        </section>
 
-  <footer class="site-footer">
-    <span id="footerVersion">Warden</span>
-    <span aria-hidden="true">·</span>
-    <a href="https://github.com/ForrestLasiter/warden" target="_blank" rel="noopener">GitHub</a>
-    <span aria-hidden="true">·</span>
-    <a href="https://github.com/ForrestLasiter/warden/issues" target="_blank" rel="noopener">Report an issue</a>
-    <span aria-hidden="true">·</span>
-    <span class="footer-note">On-demand scanner — keep your OS antivirus on too.</span>
-  </footer>
+        <!-- SWEEP -->
+        <section role="tabpanel" id="panel-sweep" aria-labelledby="tab-sweep" tabindex="0" hidden>
+          <div class="card">
+            <div class="card-head"><h2>System sweep</h2></div>
+            <p class="lede">Automatically scan the spots malware hides: startup entries, running
+              processes, scheduled tasks, Temp, and Downloads.</p>
+            <form id="sweepForm" class="controls">
+              <div class="field field-check">
+                <input type="checkbox" id="sweepQuick" name="quick">
+                <label for="sweepQuick">Quick mode (top-level temp/downloads, executables only)</label>
+              </div>
+              <div class="field field-check">
+                <input type="checkbox" id="sweepOnline" name="online">
+                <label for="sweepOnline">Check hashes online (opt-in)</label>
+              </div>
+              <div class="field field-end">
+                <button type="submit" class="btn btn-primary" id="sweepBtn">Run sweep</button>
+              </div>
+            </form>
+          </div>
+          <div id="sweepCategories" class="stat-grid stat-grid-sm" aria-live="polite"></div>
+          <div id="sweepProgress" class="progress-wrap" hidden></div>
+          <div id="sweepResults" class="results" aria-live="polite"></div>
+        </section>
+
+        <!-- HISTORY -->
+        <section role="tabpanel" id="panel-history" aria-labelledby="tab-history" tabindex="0" hidden>
+          <div class="card">
+            <div class="card-head"><h2>Scan history</h2></div>
+            <div id="historyList" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <!-- QUARANTINE -->
+        <section role="tabpanel" id="panel-quarantine" aria-labelledby="tab-quarantine" tabindex="0" hidden>
+          <div class="card">
+            <div class="card-head"><h2>Quarantine</h2></div>
+            <p class="lede">Isolated files. Restoring puts a file back; deleting removes it permanently.</p>
+            <div id="quarantineList" aria-live="polite"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <span id="footerLinks">
+          <a href="https://github.com/ForrestLasiter/warden" target="_blank" rel="noopener">GitHub</a>
+          <span aria-hidden="true">·</span>
+          <a href="https://github.com/ForrestLasiter/warden/issues" target="_blank" rel="noopener">Report an issue</a>
+        </span>
+        <span class="footer-note">On-demand scanner — keep your OS antivirus on too.</span>
+      </footer>
+    </div>
+  </div>
 
   <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
 
-  <!-- Confirm dialog (accessible modal) -->
+  <!-- Confirm dialog -->
   <div id="confirmBackdrop" class="modal-backdrop" hidden>
     <div role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmBody"
          class="modal" id="confirmModal">
