@@ -6,6 +6,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-28
+
+### Added
+- **The installers create a double-clickable "Warden" launcher** so non-technical
+  users don't need a terminal: a Desktop + Start Menu shortcut on Windows (with
+  the shield icon, opening the dashboard, console minimized), a `.desktop` entry
+  on Linux, and a `Warden.command` on macOS.
+
+### Changed
+- Friendlier dashboard startup message in the console window ("Warden is running…
+  keep this window open… close it when you're done").
+
 ## [0.4.4] - 2026-09-28
 
 ### Changed
@@ -183,7 +195,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...v0.4.2

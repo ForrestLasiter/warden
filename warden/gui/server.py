@@ -350,8 +350,14 @@ def serve(host: str = "127.0.0.1", port: int = 8787, open_browser: bool = True) 
     Config.load().ensure_dirs()
     httpd = ThreadingHTTPServer((host, port), Handler)
     url = f"http://{host}:{port}/"
-    print(f"Warden dashboard running at {url}")
-    print("Press Ctrl+C to stop.")
+    print("=" * 60)
+    print("  Warden is running.")
+    print(f"  Your browser should open to {url}")
+    print("  If it doesn't, copy that address into your browser.")
+    print("")
+    print("  Keep this window open while you use Warden.")
+    print("  Close it (or press Ctrl+C) when you're done.")
+    print("=" * 60)
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:

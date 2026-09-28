@@ -72,6 +72,36 @@ case ":$PATH:" in
      echo "  echo 'export PATH=\"$BIN_DIR:\$PATH\"' >> ~/.profile" ;;
 esac
 
+# Create a double-clickable launcher that opens the dashboard.
+if [ "$OS" = "Linux" ]; then
+  apps="$HOME/.local/share/applications"
+  mkdir -p "$apps"
+  cat > "$apps/warden.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Warden
+Comment=Open the Warden malware scanner dashboard
+Exec=$TARGET gui
+Terminal=true
+Categories=Security;Utility;
+DESKTOP
+  chmod +x "$apps/warden.desktop"
+  if [ -d "$HOME/Desktop" ]; then
+    cp "$apps/warden.desktop" "$HOME/Desktop/warden.desktop"
+    chmod +x "$HOME/Desktop/warden.desktop"
+    # GNOME needs the desktop file marked trusted before it'll launch on click.
+    command -v gio >/dev/null 2>&1 && gio set "$HOME/Desktop/warden.desktop" metadata::trusted true 2>/dev/null || true
+  fi
+  echo "Created a 'Warden' application entry (also on your Desktop)."
+elif [ "$OS" = "Darwin" ] && [ -d "$HOME/Desktop" ]; then
+  launcher="$HOME/Desktop/Warden.command"
+  printf '#!/bin/sh\nexec "%s" gui\n' "$TARGET" > "$launcher"
+  chmod +x "$launcher"
+  echo "Created 'Warden.command' on your Desktop - double-click it to open the dashboard."
+fi
+
 echo
 "$TARGET" version || true
-echo "Run 'warden --help' to get started."
+echo
+echo "Double-click the 'Warden' launcher to open the dashboard, or run"
+echo "'warden --help' in a terminal for the command line."

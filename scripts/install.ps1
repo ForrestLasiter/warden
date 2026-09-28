@@ -44,7 +44,33 @@ if (-not ($userPath -split ';' | Where-Object { $_ -eq $dir })) {
     Write-Host "Added $dir to your user PATH. Restart your terminal to pick it up."
 }
 
-Write-Host "Installed Warden to $exe"
+# Create double-clickable "Warden" shortcuts (Desktop + Start Menu) that open
+# the dashboard, using the exe's own shield icon. This is the thing a
+# non-technical user clicks - no terminal required.
+function New-WardenShortcut([string] $LinkPath) {
+    $shell = New-Object -ComObject WScript.Shell
+    $sc = $shell.CreateShortcut($LinkPath)
+    $sc.TargetPath = $exe
+    $sc.Arguments = 'gui'
+    $sc.WorkingDirectory = $dir
+    $sc.IconLocation = "$exe,0"
+    $sc.Description = 'Open the Warden malware scanner dashboard'
+    $sc.WindowStyle = 7          # start the console minimized (less scary)
+    $sc.Save()
+}
+try {
+    $startMenu = [Environment]::GetFolderPath('Programs')
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    New-WardenShortcut (Join-Path $startMenu 'Warden.lnk')
+    New-WardenShortcut (Join-Path $desktop 'Warden.lnk')
+    Write-Host "Created a 'Warden' icon on your Desktop and in the Start Menu."
+} catch {
+    Write-Warning "Could not create shortcuts: $($_.Exception.Message)"
+}
+
 Write-Host ""
+Write-Host "Installed Warden to $exe"
 & $exe version
-Write-Host "Run 'warden --help' to get started."
+Write-Host ""
+Write-Host "Double-click the 'Warden' icon on your Desktop to open the dashboard,"
+Write-Host "or run 'warden --help' in a terminal for the command line."

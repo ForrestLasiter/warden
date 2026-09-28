@@ -56,9 +56,13 @@ curl -fsSL https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/
 | Linux ARM64 | `warden-linux-arm64` |
 | macOS (Apple Silicon) | `warden-macos-arm64` |
 
-Warden is a command-line tool. **Double-clicking the Windows exe opens the
-dashboard** in your browser; to use the command line, open a terminal and run it
-with a command, e.g. `warden scan C:\Users\you\Downloads` or `warden gui`.
+**Not comfortable with the command line?** Use the one-line installer above — it
+puts a **"Warden" icon on your Desktop** (and Start Menu / applications menu).
+Double-click it to open the dashboard in your browser; no terminal needed.
+
+For command-line use, open a terminal and run Warden with a command, e.g.
+`warden scan C:\Users\you\Downloads` or `warden gui`. (Double-clicking the raw
+`.exe` also opens the dashboard.)
 
 On first run Windows SmartScreen may warn about an unsigned binary — Warden is
 unsigned, and the source is right here for you to build yourself.
