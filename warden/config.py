@@ -27,6 +27,22 @@ def _clamp_int(value, default: int, lo: int, hi: int) -> int:
         return default
     return max(lo, min(hi, n))
 
+
+def _as_bool(value, default: bool) -> bool:
+    """Coerce a config value to bool, handling JSON true/false AND the common
+    hand-edited string forms so `"false"` doesn't read as truthy True."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off", ""):
+            return False
+    if value is None:
+        return default
+    return bool(value)
+
 # Extensions worth deep content scanning. Everything still gets hashed.
 # Empty set here means "scan everything"; we instead skip a known-huge/binary
 # media denylist below by default.
@@ -92,9 +108,9 @@ class Config:
         # hostile config.json can never crash Warden or set a pathological limit.
         cfg.max_scan_bytes = _clamp_int(
             raw.get("max_scan_bytes"), cfg.max_scan_bytes, MIN_SCAN_BYTES, MAX_SCAN_BYTES)
-        cfg.follow_symlinks = bool(raw.get("follow_symlinks", cfg.follow_symlinks))
-        cfg.use_clamav = bool(raw.get("use_clamav", cfg.use_clamav))
-        cfg.online_hash_lookup = bool(raw.get("online_hash_lookup", cfg.online_hash_lookup))
+        cfg.follow_symlinks = _as_bool(raw.get("follow_symlinks"), cfg.follow_symlinks)
+        cfg.use_clamav = _as_bool(raw.get("use_clamav"), cfg.use_clamav)
+        cfg.online_hash_lookup = _as_bool(raw.get("online_hash_lookup"), cfg.online_hash_lookup)
         cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key) or "")
         exts = raw.get("skip_extensions")
         if isinstance(exts, (list, tuple, set)):

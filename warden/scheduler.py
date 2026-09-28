@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .config import Config
 from .models import Severity
+from .storage import file_lock
 
 IS_WINDOWS = os.name == "nt"
 _FREQUENCIES = ("hourly", "daily", "weekly")
@@ -74,7 +75,11 @@ class ScheduleSpec:
             if self.quick:
                 args.append("--quick")
         else:
-            args += ["scan", self.target, "--save", "--min-severity", self.min_severity, "--quiet"]
+            # `--` guarantees the target is treated as a positional path even if
+            # it begins with '-'; abspath so it doesn't resolve against the
+            # scheduler's (unknown) working directory at run time.
+            args += ["scan", "--save", "--quiet", "--min-severity", self.min_severity,
+                     "--", os.path.abspath(self.target)]
         return args
 
 
@@ -87,6 +92,7 @@ class Scheduler:
         self.config = config or Config.load()
         self.config.ensure_dirs()
         self.registry = self.config.data_dir / "schedules.json"
+        self._lock_path = self.config.data_dir / "schedules.lock"
 
     # -- registry ---------------------------------------------------------
     def _load(self) -> list[dict]:
@@ -120,23 +126,28 @@ class Scheduler:
             if not spec.target:
                 raise SchedulerError("scan schedules need a --target path")
             _validate_target(spec.target)
+            spec.target = os.path.abspath(spec.target)   # store an absolute path
 
-        specs = self._load()
-        if any(s["name"] == spec.name for s in specs):
-            raise SchedulerError(f"a schedule named '{spec.name}' already exists")
-
-        detail = self._install_os_task(spec)
-
-        specs.append(spec.to_dict())
-        self._save(specs)
+        with file_lock(self._lock_path):
+            specs = self._load()
+            if any(s["name"] == spec.name for s in specs):
+                raise SchedulerError(f"a schedule named '{spec.name}' already exists")
+            detail = self._install_os_task(spec)
+            specs.append(spec.to_dict())
+            self._save(specs)
         return detail
 
     def remove(self, name: str) -> None:
-        specs = self._load()
-        if not any(s["name"] == name for s in specs):
-            raise SchedulerError(f"no schedule named '{name}'")
-        self._remove_os_task(name)
-        self._save([s for s in specs if s["name"] != name])
+        _validate_name(name)
+        with file_lock(self._lock_path):
+            specs = self._load()
+            present = any(s["name"] == name for s in specs)
+            # Always attempt the OS-level removal, even if the registry lost
+            # track of it, so an orphaned task/cron line still gets cleaned up.
+            self._remove_os_task(name)
+            if not present:
+                raise SchedulerError(f"no schedule named '{name}' (removed any orphaned OS task)")
+            self._save([s for s in specs if s["name"] != name])
 
     # -- OS integration ---------------------------------------------------
     def _install_os_task(self, spec: ScheduleSpec) -> str:
@@ -169,6 +180,13 @@ def _validate_time(t: str) -> None:
 
 
 # -- Windows (schtasks) --------------------------------------------------
+def _schtasks_exe() -> str:
+    """Absolute path to schtasks so a CWD-planted schtasks.exe can't hijack it."""
+    root = os.environ.get("SystemRoot") or r"C:\Windows"
+    p = os.path.join(root, "System32", "schtasks.exe")
+    return p if os.path.isfile(p) else "schtasks"
+
+
 def _win_taskname(name: str) -> str:
     return f"\\Warden\\{name}"
 
@@ -180,7 +198,7 @@ def _quote_win(arg: str) -> str:
 def _win_create(spec: ScheduleSpec) -> str:
     sc = {"hourly": "HOURLY", "daily": "DAILY", "weekly": "WEEKLY"}[spec.frequency]
     tr = " ".join(_quote_win(a) for a in spec.command_args())
-    cmd = ["schtasks", "/create", "/tn", _win_taskname(spec.name),
+    cmd = [_schtasks_exe(), "/create", "/tn", _win_taskname(spec.name),
            "/tr", tr, "/sc", sc, "/f"]
     if spec.frequency != "hourly":
         cmd += ["/st", spec.time]
@@ -194,7 +212,7 @@ def _win_create(spec: ScheduleSpec) -> str:
 
 
 def _win_delete(name: str) -> None:
-    subprocess.run(["schtasks", "/delete", "/tn", _win_taskname(name), "/f"],
+    subprocess.run([_schtasks_exe(), "/delete", "/tn", _win_taskname(name), "/f"],
                    capture_output=True, text=True, timeout=30)
 
 

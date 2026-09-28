@@ -37,8 +37,10 @@ def test_quarantine_isolate_restore_roundtrip(tmp_path):
 
 def test_quarantine_delete_removes_entry(tmp_path):
     victim = tmp_path / "bad.exe"
-    victim.write_bytes(b"MZ junk")
-    result = FileResult(path=str(victim), findings=[Finding("h", "x", Severity.CRITICAL)])
+    data = b"MZ junk"
+    victim.write_bytes(data)
+    result = FileResult(path=str(victim), sha256=hashlib.sha256(data).hexdigest(),
+                        findings=[Finding("h", "x", Severity.CRITICAL)])
     q = _q(tmp_path)
     entry = q.quarantine_file(result)
     q.delete(entry.id)

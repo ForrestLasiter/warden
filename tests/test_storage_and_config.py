@@ -57,3 +57,38 @@ def test_bad_skip_extensions_ignored(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"skip_extensions": {"a": 1}}))
     cfg = Config.load(tmp_path)
     assert isinstance(cfg.skip_extensions, set)
+
+
+def test_string_booleans_are_coerced(tmp_path):
+    (tmp_path / "config.json").write_text(
+        json.dumps({"use_clamav": "false", "follow_symlinks": "true",
+                    "online_hash_lookup": "no"}))
+    cfg = Config.load(tmp_path)
+    assert cfg.use_clamav is False
+    assert cfg.follow_symlinks is True
+    assert cfg.online_hash_lookup is False
+
+
+def test_file_lock_is_exclusive(tmp_path):
+    import threading
+    import time
+    from warden import storage
+    lock = tmp_path / "x.lock"
+    order = []
+
+    def worker(tag, hold):
+        with storage.file_lock(lock):
+            order.append(f"{tag}-in")
+            time.sleep(hold)
+            order.append(f"{tag}-out")
+
+    t1 = threading.Thread(target=worker, args=("a", 0.2))
+    t2 = threading.Thread(target=worker, args=("b", 0.0))
+    t1.start()
+    time.sleep(0.05)
+    t2.start()
+    t1.join()
+    t2.join()
+    # b must not enter until a has left (no interleaving).
+    assert order in (["a-in", "a-out", "b-in", "b-out"],
+                     ["b-in", "b-out", "a-in", "a-out"])

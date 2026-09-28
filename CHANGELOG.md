@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-27
+
+Second adversarial code-review pass — the issues that survived the first review.
+
+### Security
+- **Executable-hijack fix:** PowerShell (signature checks) and `schtasks` are now
+  invoked by absolute system path, so a `powershell.exe`/`schtasks.exe` planted in
+  the working directory can't be run instead (a conditional local RCE the first
+  pass left open by fixing only argument injection).
+- **Quarantine TOCTOU closed:** the file is hashed **as it is copied** and the
+  operation aborts unless those bytes match the scan hash — the stored copy
+  provably corresponds to the detection. Quarantine now **fails closed** when the
+  scan hash is missing instead of proceeding unvalidated.
+- **Concurrency:** quarantine index and schedule registry updates are serialized
+  with a cross-platform file lock, so concurrent operations can't lose each
+  other's update.
+
+### Correctness
+- Engine **load** failures (e.g. a YARA ruleset that won't compile) now mark the
+  scan degraded (`warnings`, exit 2) instead of silently reducing coverage.
+- **System sweep** now extracts interpreter-hosted payloads (`wscript evil.vbs`,
+  `rundll32 evil.dll,Run`, `powershell -File …`) instead of only the signed
+  interpreter — closing a class of missed script/DLL persistence.
+- Dashboard **`min_severity`** is now validated (400 on invalid) and actually
+  applied as the client-side result filter.
+- Scheduled scans pass the target after `--` and as an absolute path (no CLI
+  arg-injection, no wrong-CWD resolution); `schedule remove` cleans orphaned OS
+  tasks.
+
+### Reliability / performance
+- Content-skipped files (media/VM images) are no longer fully hashed.
+- Malformed `Content-Length` → clean 400; string booleans in config are coerced.
+
+### Supply chain
+- Releases now publish `SHA256SUMS`; the one-line installers verify the download
+  against it before installing.
+
 ## [0.4.1] - 2026-09-27
 
 ### Added
@@ -125,7 +162,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/ForrestLasiter/warden/compare/v0.3.2...v0.3.3

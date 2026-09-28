@@ -76,6 +76,17 @@ class YaraEngine:
         return self._rules is not None
 
     @property
+    def load_error(self) -> str | None:
+        """A genuine failure to compile rules that were expected to load.
+
+        Distinct from "no rules found" (harmless): a broken ruleset silently
+        reducing coverage must not let files be reported clean.
+        """
+        if self._rules is None and self._load_error and "no YARA rule" not in self._load_error:
+            return self._load_error
+        return None
+
+    @property
     def status(self) -> str:
         if self.available():
             return f"{self._rule_count} rule file(s) loaded"

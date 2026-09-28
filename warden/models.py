@@ -153,6 +153,7 @@ class ScanReport:
     bytes_scanned: int = 0
     errors: int = 0
     engines: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # e.g. an engine failed to load
     results: list[FileResult] = field(default_factory=list)
 
     @property
@@ -193,6 +194,7 @@ class ScanReport:
             "bytes_scanned": self.bytes_scanned,
             "errors": self.errors,
             "engines": self.engines,
+            "warnings": self.warnings,
             "counts_by_verdict": self.counts_by_verdict(),
             "threats": len(self.threats),
             "unknown": len(self.unknown),

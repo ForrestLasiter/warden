@@ -259,9 +259,7 @@ def _registry_autorun_executables() -> list[Path]:
                     except OSError:
                         break
                     i += 1
-                    exe = _extract_exe_path(str(value))
-                    if exe:
-                        exes.append(exe)
+                    exes.extend(_extract_exe_paths(str(value)))
         except OSError:
             continue
     return exes
@@ -287,9 +285,7 @@ def _scheduled_task_executables() -> list[Path]:
     reader = csv.DictReader(io.StringIO(proc.stdout))
     for row in reader:
         run = row.get("Task To Run") or row.get("Task To Run ") or ""
-        exe = _extract_exe_path(run)
-        if exe:
-            exes.append(exe)
+        exes.extend(_extract_exe_paths(run))
     return exes
 
 
@@ -322,7 +318,88 @@ def _extract_exe_path(command: str) -> Path | None:
     return first if first and first.is_file() else None
 
 
+# Interpreters/LOLBins that host a payload passed as an argument. When the
+# primary executable is one of these, the real threat is the script/DLL it runs.
+_INTERPRETERS = {
+    "wscript.exe", "cscript.exe", "powershell.exe", "pwsh.exe", "cmd.exe",
+    "mshta.exe", "rundll32.exe", "regsvr32.exe", "wmic.exe", "msbuild.exe",
+    "installutil.exe", "regasm.exe", "regsvcs.exe",
+}
+
+
+def _split_command(command: str) -> list[str]:
+    """Split a command line on whitespace, respecting double-quoted spans."""
+    toks, cur, quoted = [], [], False
+    for ch in command:
+        if ch == '"':
+            quoted = not quoted
+        elif ch.isspace() and not quoted:
+            if cur:
+                toks.append("".join(cur))
+                cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        toks.append("".join(cur))
+    return toks
+
+
+def _extract_exe_paths(command: str) -> list[Path]:
+    """All plausible on-disk file paths referenced by a command line.
+
+    Returns the primary executable AND, when that is an interpreter/LOLBin (or
+    the primary can't be resolved), any file-path arguments too - so script- and
+    DLL-based persistence (``wscript evil.vbs``, ``rundll32 evil.dll,Run``) is
+    actually scanned instead of just the signed interpreter.
+    """
+    out: list[Path] = []
+    seen: set[str] = set()
+
+    def add(raw: str) -> None:
+        cand = os.path.expandvars(raw.strip().strip('"'))
+        if not cand:
+            return
+        # rundll32-style "evil.dll,Entry"
+        if "," in cand:
+            try:
+                if not Path(cand).is_file():
+                    cand = cand.split(",", 1)[0]
+            except OSError:
+                cand = cand.split(",", 1)[0]
+        p = Path(cand)
+        try:
+            is_file = p.is_file()
+        except OSError:
+            is_file = False
+        if is_file:
+            key = str(p).lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(p)
+
+    primary = _extract_exe_path(command)
+    if primary:
+        add(str(primary))
+    is_interpreter = (primary is not None and primary.name.lower() in _INTERPRETERS)
+    if is_interpreter or primary is None:
+        for tok in _split_command(command):
+            add(tok)
+    return out
+
+
 _SIGN_CACHE: dict[str, bool | None] = {}
+
+
+def _powershell_exe() -> str:
+    """Absolute path to the system PowerShell.
+
+    SECURITY: invoking it by bare name would let Windows' executable search
+    order run a `powershell.exe` planted in the current directory (which the
+    sweep is often launched from, e.g. Downloads). Resolve the trusted copy.
+    """
+    root = os.environ.get("SystemRoot") or r"C:\Windows"
+    p = os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    return p if os.path.isfile(p) else "powershell"
 
 
 def _is_signed(path: Path) -> bool | None:
@@ -342,7 +419,7 @@ def _is_signed(path: Path) -> bool | None:
         # file into Temp/Downloads, which this sweep enumerates). Pass the path
         # out-of-band via an environment variable, which cannot be parsed as code.
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            [_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
              "(Get-AuthenticodeSignature -LiteralPath $env:WARDEN_SIGPATH).Status"],
             capture_output=True, text=True, timeout=20,
             env={**os.environ, "WARDEN_SIGPATH": str(path)},

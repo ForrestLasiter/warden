@@ -186,17 +186,20 @@ function renderResultItem(r, jobId, index) {
   return item;
 }
 
-function renderResults(container, report, jobId) {
+const SEV_INDEX = { info: 1, low: 2, medium: 3, high: 4, critical: 5 };
+
+function renderResults(container, report, jobId, minVerdict) {
+  const threshold = minVerdict || 3;   // default: medium and up
   container.innerHTML = "";
   container.append(renderSummary(report));
   // Keep each result's original index so the server can look it up by handle.
-  const threats = report.results
+  const flagged = report.results
     .map((r, i) => ({ r, i }))
-    .filter((x) => x.r.verdict >= 3)
+    .filter((x) => x.r.verdict >= threshold)
     .sort((a, b) => b.r.verdict - a.r.verdict);
-  if (!threats.length) return;
+  if (!flagged.length) return;
   container.append(el("h2", { text: "Flagged files", style: "font-size:1.05rem;margin:6px 2px 0" }));
-  threats.forEach((x) => container.append(renderResultItem(x.r, jobId, x.i)));
+  flagged.forEach((x) => container.append(renderResultItem(x.r, jobId, x.i)));
 }
 
 /* ---------- jobs ---------- */
@@ -231,7 +234,7 @@ $("#scanForm").addEventListener("submit", async (e) => {
     const { job } = await api("/api/scan", { method: "POST", body: JSON.stringify({ path, min_severity: $("#scanSeverity").value, save: true, online: $("#scanOnline").checked }) });
     const done = await pollJob(job, (j) => { text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`; });
     $("#scanProgress").hidden = true;
-    renderResults($("#scanResults"), done.report, job);
+    renderResults($("#scanResults"), done.report, job, SEV_INDEX[$("#scanSeverity").value] || 3);
     statusCache = null;
     toast(done.report.threats ? `${done.report.threats} threat(s) found` : "Scan complete — clean", done.report.threats ? "error" : "success");
   } catch (err) { $("#scanProgress").hidden = true; toast("Scan failed: " + err.message, "error"); }

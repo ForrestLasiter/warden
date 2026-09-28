@@ -56,6 +56,36 @@ def test_clamav_error_exit_code_is_not_clean(tmp_path, monkeypatch):
     assert findings and all(fd.meta.get("engine_error") for fd in findings)
 
 
+def test_skip_extension_file_is_not_hashed(tmp_path):
+    """Content-skipped media/VM files shouldn't be fully hashed (I/O bound)."""
+    f = tmp_path / "disk.iso"
+    f.write_bytes(b"not really an iso")
+    rep = Scanner(Config(data_dir=tmp_path)).scan_path(f)
+    assert rep.results[0].sha256 is None
+
+
+def test_engine_load_error_makes_scan_degraded(tmp_path):
+    """A failed-to-load engine must make the scan non-clean, not silently clean."""
+    s = Scanner(Config(data_dir=tmp_path))
+    s.engine_warnings = ["yara: YARA compile failed: boom"]  # simulate a broken ruleset
+    f = tmp_path / "a.txt"
+    f.write_text("nothing suspicious")
+    rep = s.scan_path(f)
+    assert rep.warnings
+    assert _scan_exit_code(rep) == 2
+
+
+def test_yara_load_error_distinguishes_compile_from_empty():
+    from warden.engines.yara_engine import YaraEngine
+    from warden.config import BUNDLED_RULES_DIR
+    eng = YaraEngine([BUNDLED_RULES_DIR])
+    eng._rules = None
+    eng._load_error = "YARA compile failed: boom"
+    assert eng.load_error is not None
+    eng._load_error = "no YARA rule files found"
+    assert eng.load_error is None
+
+
 def test_small_file_is_read_once(tmp_path, monkeypatch):
     """A file that fits in memory is opened a single time for content + hash."""
     f = tmp_path / "x.bin"

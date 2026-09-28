@@ -29,17 +29,40 @@ esac
 BIN_DIR="${WARDEN_BIN_DIR:-$HOME/.local/bin}"
 mkdir -p "$BIN_DIR"
 TARGET="$BIN_DIR/warden"
-URL="https://github.com/$REPO/releases/latest/download/$ASSET"
+BASE="https://github.com/$REPO/releases/latest/download"
 
+_fetch() {  # url dest
+  if command -v curl >/dev/null 2>&1; then curl -fSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then wget -qO "$2" "$1"
+  else echo "Need curl or wget to download." >&2; exit 1; fi
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 echo "Downloading $ASSET from the latest release..."
-if command -v curl >/dev/null 2>&1; then
-  curl -fSL "$URL" -o "$TARGET"
-elif command -v wget >/dev/null 2>&1; then
-  wget -O "$TARGET" "$URL"
+_fetch "$BASE/$ASSET" "$TMP/$ASSET"
+
+# Verify against the published SHA256SUMS before installing.
+if _fetch "$BASE/SHA256SUMS" "$TMP/SHA256SUMS" 2>/dev/null; then
+  expected="$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$TMP/$ASSET" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')"
+  fi
+  if [ -z "$expected" ]; then
+    echo "Warning: no checksum listed for $ASSET; proceeding unverified." >&2
+  elif [ "$expected" != "$actual" ]; then
+    echo "Checksum verification FAILED for $ASSET (expected $expected, got $actual)." >&2
+    exit 1
+  else
+    echo "Checksum verified."
+  fi
 else
-  echo "Need curl or wget to download." >&2; exit 1
+  echo "Warning: could not fetch SHA256SUMS; proceeding unverified." >&2
 fi
 
+mv "$TMP/$ASSET" "$TARGET"
 chmod +x "$TARGET"
 echo "Installed Warden to $TARGET"
 

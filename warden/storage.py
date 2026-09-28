@@ -12,10 +12,63 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 _IS_WINDOWS = os.name == "nt"
+
+
+@contextmanager
+def file_lock(lock_path: str | os.PathLike, *, timeout: float = 15.0) -> Iterator[None]:
+    """A cross-process advisory lock, held for the duration of the ``with`` block.
+
+    Serializes read-modify-write of shared state files (the quarantine index,
+    the schedule registry) so two Warden processes / two dashboard threads can't
+    lose each other's update. Uses fcntl on POSIX and msvcrt on Windows.
+    """
+    lock_path = Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        _acquire(fd, timeout)
+        try:
+            yield
+        finally:
+            _release(fd)
+    finally:
+        os.close(fd)
+
+
+def _acquire(fd: int, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            if _IS_WINDOWS:
+                import msvcrt
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("could not acquire Warden state lock in time")
+            time.sleep(0.05)
+
+
+def _release(fd: int) -> None:
+    try:
+        if _IS_WINDOWS:
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
 
 
 def fsync_dir(path: Path) -> None:
