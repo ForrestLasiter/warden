@@ -40,10 +40,14 @@ def test_is_signed_never_interpolates_path_into_powershell(monkeypatch):
 
 
 def test_powershell_resolves_to_system_absolute(monkeypatch):
+    import os
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     monkeypatch.setattr(sweep.os.path, "isfile", lambda p: True)
-    assert sweep._powershell_exe() == \
-        r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    # Build the expected path the same way the code does, so the assertion is
+    # separator-agnostic (os.path.join uses '/' on POSIX CI runners).
+    expected = os.path.join(r"C:\Windows", "System32", "WindowsPowerShell",
+                            "v1.0", "powershell.exe")
+    assert sweep._powershell_exe() == expected
 
 
 def test_extract_exe_paths_includes_interpreter_payload(tmp_path):
