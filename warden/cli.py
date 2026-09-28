@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json as _json
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -681,8 +683,43 @@ def config_path():
     console.print(str(Config.load().config_path))
 
 
+def _launched_by_double_click() -> bool:
+    """True when the Windows console was created just for us (Explorer launch),
+    rather than inherited from a terminal the user is typing in."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        # If we're the only process attached to the console, nobody launched us
+        # from an existing shell -> it was a double-click.
+        buf = (ctypes.c_uint * 4)()
+        n = ctypes.windll.kernel32.GetConsoleProcessList(buf, 4)
+        return n <= 1
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main():
-    app()
+    # A double-clicked CLI just flashes a console and closes, which looks broken.
+    # When the packaged exe is opened from Explorer with no arguments, launch the
+    # dashboard instead. In a terminal (or with args) it behaves as a normal CLI.
+    double_click = (
+        getattr(sys, "frozen", False)
+        and len(sys.argv) == 1
+        and _launched_by_double_click()
+    )
+    if double_click:
+        sys.argv.append("gui")
+    try:
+        app()
+    except SystemExit as exc:
+        # Keep the window open on an error so a double-click user can read it.
+        if double_click and exc.code not in (0, None):
+            try:
+                input("\nPress Enter to close…")
+            except EOFError:
+                pass
+        raise
 
 
 if __name__ == "__main__":

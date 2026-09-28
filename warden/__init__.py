@@ -4,5 +4,5 @@ Guards your filesystem. Scans files and systems using YARA rules,
 hash reputation, structural heuristics, and (optionally) ClamAV.
 """
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 __all__ = ["__version__"]

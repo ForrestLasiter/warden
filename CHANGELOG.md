@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-28
+
+### Changed
+- **Double-clicking the packaged Windows binary now opens the dashboard.**
+  Previously a double-click just flashed a console window and closed (Warden is a
+  CLI, so with no arguments it printed help and exited). When the exe is launched
+  from Explorer with no arguments it now starts `warden gui`; run from a terminal
+  (or with arguments) it still behaves as a normal CLI. On an error it keeps the
+  window open so the message is readable.
+
 ## [0.4.3] - 2026-09-28
 
 ### Supply chain
@@ -173,7 +183,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...v0.4.1
