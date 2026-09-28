@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-28
+
+### Supply chain
+- **Pinned all third-party GitHub Actions to commit SHAs** (checkout, setup-python,
+  upload/download-artifact, action-gh-release) so a moved tag can't inject code.
+- **Hash-locked, version-pinned build dependencies** in `requirements-release.txt`
+  (a universal `uv pip compile --generate-hashes` lock covering all four target
+  platforms). The release workflow installs with `pip install --require-hashes`
+  then `pip install --no-deps .`, so a compromised or broken upstream dependency
+  release can't enter a published binary.
+
 ## [0.4.2] - 2026-09-27
 
 Second adversarial code-review pass — the issues that survived the first review.
@@ -162,7 +173,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...v0.4.0

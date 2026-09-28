@@ -1,0 +1,11 @@
+# Direct build/runtime dependencies for producing the release binaries.
+# Compiled to requirements-release.txt (pinned + hashed, all platforms) with:
+#   uv pip compile --universal --generate-hashes requirements-release.in \
+#       -o requirements-release.txt
+yara-x
+typer
+rich
+pefile
+psutil
+httpx
+pyinstaller
