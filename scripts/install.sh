@@ -14,6 +14,7 @@ case "$OS" in
   Linux)
     case "$ARCH" in
       x86_64|amd64) ASSET="warden-linux-x64" ;;
+      aarch64|arm64) ASSET="warden-linux-arm64" ;;
       *) echo "No prebuilt Linux binary for '$ARCH' yet. Install from source: https://github.com/$REPO#install-dev" >&2; exit 1 ;;
     esac ;;
   Darwin)

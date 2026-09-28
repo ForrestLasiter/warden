@@ -53,6 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/
 | --- | --- |
 | Windows x64 | `warden-windows-x64.exe` |
 | Linux x64 | `warden-linux-x64` |
+| Linux ARM64 | `warden-linux-arm64` |
 | macOS (Apple Silicon) | `warden-macos-arm64` |
 
 On first run Windows SmartScreen may warn about an unsigned binary — Warden is
@@ -256,8 +257,7 @@ pyinstaller packaging/warden.spec --noconfirm   # -> dist/warden(.exe)
 - [x] Accessible web dashboard (WCAG 2.1 AA, light/dark)
 - [x] Standalone Windows/Linux/macOS binaries on the Releases page
 - [x] Opt-in online hash reputation lookup (Team Cymru — keyless; VirusTotal — free key)
-- [ ] Signed binaries (quiet SmartScreen / Gatekeeper)
-- [ ] ARM64 Linux builds
+- [x] ARM64 Linux builds
 
 ## Contributing
 

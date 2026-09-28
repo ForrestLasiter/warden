@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-27
+
+### Added
+- **ARM64 Linux binaries** (`warden-linux-arm64`) built on GitHub's ARM runners
+  and published to Releases; `install.sh` now serves them for aarch64. CI also
+  runs on ARM64 Linux.
+
+### Removed
+- Dropped the "signed binaries" roadmap item (code-signing certificates are a
+  paid service and out of scope for this project).
+
 ## [0.4.0] - 2026-09-27
 
 Security & reliability hardening from a full code review. No breaking changes to
@@ -114,7 +125,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/ForrestLasiter/warden/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/ForrestLasiter/warden/compare/v0.3.1...v0.3.2

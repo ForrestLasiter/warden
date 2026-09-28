@@ -27,6 +27,9 @@ jobs:
           - os: ubuntu-latest
             bin: dist/warden
             asset: warden-linux-x64
+          - os: ubuntu-24.04-arm
+            bin: dist/warden
+            asset: warden-linux-arm64
           - os: macos-latest
             bin: dist/warden
             asset: warden-macos-arm64
@@ -81,6 +84,7 @@ jobs:
             | --- | --- |
             | Windows x64 | `warden-windows-x64.exe` |
             | Linux x64 | `warden-linux-x64` |
+            | Linux ARM64 | `warden-linux-arm64` |
             | macOS (Apple Silicon) | `warden-macos-arm64` |
 
             On Linux/macOS: `chmod +x warden-*` then run it. On Windows,
