@@ -332,14 +332,20 @@ def _is_signed(path: Path) -> bool | None:
     """
     if not IS_WINDOWS:
         return None
-    key = str(path).lower()
+    key = str(path)
     if key in _SIGN_CACHE:
         return _SIGN_CACHE[key]
     try:
+        # SECURITY: never interpolate the path into the PowerShell script. A
+        # filename containing a single quote would otherwise break out of the
+        # string literal and execute arbitrary code (an attacker can drop such a
+        # file into Temp/Downloads, which this sweep enumerates). Pass the path
+        # out-of-band via an environment variable, which cannot be parsed as code.
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
-             f"(Get-AuthenticodeSignature -LiteralPath '{path}').Status"],
+             "(Get-AuthenticodeSignature -LiteralPath $env:WARDEN_SIGPATH).Status"],
             capture_output=True, text=True, timeout=20,
+            env={**os.environ, "WARDEN_SIGPATH": str(path)},
         )
         status = proc.stdout.strip()
         result: bool | None

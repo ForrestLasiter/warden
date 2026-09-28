@@ -44,6 +44,11 @@ _SUSPICIOUS_SCRIPT_TOKENS = (
 )
 
 
+# Upper bounds so a crafted/huge file can't make an engine hang or balloon memory.
+_MAX_PE_BYTES = 64 * 1024 * 1024        # skip pefile parsing above this
+_MAX_SCRIPT_BYTES = 2 * 1024 * 1024     # only token-scan the first 2 MB
+
+
 class HeuristicsEngine:
     name = "heuristics"
 
@@ -67,8 +72,9 @@ class HeuristicsEngine:
         if ext in _SCRIPT_EXTS or _looks_like_text(data):
             findings += self._script_tokens(data)
 
-        # 3) PE structural heuristics
-        if data[:2] == b"MZ" and pefile is not None:
+        # 3) PE structural heuristics (bounded: pefile can be slow/heavy on
+        #    crafted or very large binaries).
+        if data[:2] == b"MZ" and pefile is not None and ctx.size <= _MAX_PE_BYTES:
             findings += self._pe_checks(data, ext)
 
         # 4) High entropy for small executables (possible packed dropper)
@@ -98,11 +104,12 @@ class HeuristicsEngine:
         return []
 
     def _script_tokens(self, data: bytes) -> list[Finding]:
+        # Bound the work and lowercase ONCE (not once per token).
         try:
-            text = data.decode("utf-8", errors="ignore")
+            text = data[:_MAX_SCRIPT_BYTES].decode("utf-8", errors="ignore").lower()
         except Exception:  # noqa: BLE001
             return []
-        hits = [tok for tok in _SUSPICIOUS_SCRIPT_TOKENS if tok.lower() in text.lower()]
+        hits = [tok for tok in _SUSPICIOUS_SCRIPT_TOKENS if tok.lower() in text]
         if not hits:
             return []
         sev = Severity.MEDIUM if len(hits) >= 2 else Severity.LOW

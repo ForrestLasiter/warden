@@ -9,14 +9,14 @@ def test_config_save_load_roundtrip(tmp_path):
     cfg.online_hash_lookup = True
     cfg.virustotal_api_key = "test-key-1234"
     cfg.use_clamav = False
-    cfg.max_scan_bytes = 12345
+    cfg.max_scan_bytes = 5_000_000        # within [MIN_SCAN_BYTES, MAX_SCAN_BYTES]
     cfg.save()
 
     loaded = Config.load(tmp_path)
     assert loaded.online_hash_lookup is True
     assert loaded.virustotal_api_key == "test-key-1234"
     assert loaded.use_clamav is False
-    assert loaded.max_scan_bytes == 12345
+    assert loaded.max_scan_bytes == 5_000_000
 
 
 def test_config_defaults_when_missing(tmp_path):

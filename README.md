@@ -80,12 +80,18 @@ verdict, rated **Info → Low → Medium → High → Critical**:
 
 ## Dashboard
 
-`warden gui` opens a local dashboard (bound to `127.0.0.1`, protected by a
-per-session token) for scans, sweeps, history, and quarantine — with live
-progress and one-click isolation. It's built to **WCAG 2.1 AA**: full keyboard
-navigation, visible focus, ARIA roles and live regions, `prefers-reduced-motion`,
-and a **light / dark / system** theme toggle that remembers your choice. No
+`warden gui` opens a local dashboard for scans, sweeps, history, and quarantine —
+with live progress and one-click isolation. It targets **WCAG 2.1 AA**
+(self-assessed): keyboard navigation, visible focus, ARIA roles and live regions,
+`prefers-reduced-motion`, and a **light / dark / system** theme toggle. No
 Electron, no dependencies beyond the Python standard library.
+
+**Security:** the server binds to `127.0.0.1`, validates the `Host` header
+(blocks DNS rebinding), requires a per-session token on every API call (blocks
+cross-site requests), caps request size and concurrent jobs, and only quarantines
+files it actually scanned. It is **not** hardened against other processes running
+as you — see [Threat model & limitations](#threat-model--limitations). Stop it
+when you're done.
 
 ## Usage
 
@@ -125,19 +131,46 @@ warden update-rules                  # how to add YARA rules & hash feeds
 
 ## How it works
 
-Each file is inspected once — read into memory and hashed a single time — then
-passed to every available engine. Findings are aggregated into a verdict per file
-and a report per scan. The same core powers the CLI, the sweep, the scheduler,
-and the dashboard.
+Files that fit within `max_scan_bytes` (100 MB by default) are read **once** and
+hashed from that same buffer, so the recorded SHA-256 always matches the bytes
+that were scanned. Larger files are hashed in full while content engines see the
+first `max_scan_bytes`. Findings are aggregated into a per-file verdict and a
+per-scan report. The same core powers the CLI, the sweep, the scheduler, and the
+dashboard.
 
 - **On-demand, not resident.** No kernel driver, no background hooks. Warden runs
-  when you ask it to. This is a deliberate design choice: real-time protection is
-  what Defender already does well.
-- **Safe by default.** Quarantine never runs a file and never hard-deletes
-  without explicit confirmation. Quarantined copies are XOR-neutralized so they
-  can't execute, and restore is byte-for-byte identical.
-- **Private.** Nothing leaves your machine. Online hash lookups are opt-in and
-  off by default.
+  when you ask it to — real-time protection is what Defender already does well.
+- **Fails safe, not open.** If a detection engine errors on a file, that file is
+  reported **`unknown`**, never `clean`, and the scan exits non-zero (2). A
+  crashed engine can't turn into a false "all clear."
+- **Reversible quarantine.** Quarantine never runs a file and never hard-deletes
+  without explicit confirmation. It re-checks the file's hash before acting,
+  writes the neutralized copy durably (fsync) and removes the original **last**,
+  so a crash can't lose your file. Restore refuses to overwrite an existing file
+  or follow a symlink. The stored `.qbin` is XOR-obfuscated to prevent *accidental*
+  execution / AV re-detection — that's obfuscation, not encryption.
+- **Local-first.** Nothing leaves your machine unless you opt into online
+  reputation (off by default). When enabled, only a file **hash** is sent — the
+  keyless provider resolves it through Cloudflare's DNS-over-HTTPS to the Team
+  Cymru registry, so that resolver sees the hash queries; VirusTotal (with your
+  key) sees them directly. See [Online reputation](#online-reputation-opt-in).
+
+## Threat model & limitations
+
+Warden is an **on-demand second-opinion scanner**, not a real-time antivirus, and
+not a sandbox. Specifically:
+
+- **Keep your OS antivirus on.** Warden does not replace Microsoft Defender.
+- **Missed detections and false positives are expected** in any scanner; treat
+  results as advisory. `unknown` means an engine couldn't finish — investigate,
+  don't assume clean.
+- **The local dashboard shares the loopback trust domain.** The per-session token
+  stops cross-site (CSRF) requests, and a `Host`-header check blocks DNS
+  rebinding, but any process already running as you on your machine can reach
+  `127.0.0.1` — the token is not a defense against local malware. Run the
+  dashboard only on a machine you trust, and stop it when you're done.
+- **Quarantine is containment against *accidents*, not against running malware.**
+  The `.qbin` is trivially reversible by design (so you can restore).
 
 ## Online reputation (opt-in)
 

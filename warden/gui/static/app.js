@@ -161,7 +161,7 @@ function renderSummary(report) {
       el("span", {}, el("strong", { text: (report.duration_seconds || 0).toFixed(1) + "s" }), " elapsed")));
 }
 
-function renderResultItem(r) {
+function renderResultItem(r, jobId, index) {
   const item = el("div", { class: "result-item" });
   const box = el("div", { class: "result-findings" });
   const id = "res-" + Math.random().toString(36).slice(2);
@@ -177,22 +177,26 @@ function renderResultItem(r) {
         el("span", { class: "finding-engine", text: `· ${f.engine}` })),
       el("div", { text: f.description })));
   }
-  if (r.verdict >= 3) {
+  if (r.verdict >= 3 && jobId != null && index != null) {
     box.append(el("div", { class: "finding" },
       el("button", { class: "btn btn-danger btn-small", type: "button",
-        onclick: (e) => { e.stopPropagation(); quarantineResult(r); } }, "Quarantine this file")));
+        onclick: (e) => { e.stopPropagation(); quarantineResult(jobId, index); } }, "Quarantine this file")));
   }
   item.append(head, box);
   return item;
 }
 
-function renderResults(container, report) {
+function renderResults(container, report, jobId) {
   container.innerHTML = "";
   container.append(renderSummary(report));
-  const threats = report.results.filter((r) => r.verdict >= 3).sort((a, b) => b.verdict - a.verdict);
+  // Keep each result's original index so the server can look it up by handle.
+  const threats = report.results
+    .map((r, i) => ({ r, i }))
+    .filter((x) => x.r.verdict >= 3)
+    .sort((a, b) => b.r.verdict - a.r.verdict);
   if (!threats.length) return;
   container.append(el("h2", { text: "Flagged files", style: "font-size:1.05rem;margin:6px 2px 0" }));
-  threats.forEach((r) => container.append(renderResultItem(r)));
+  threats.forEach((x) => container.append(renderResultItem(x.r, jobId, x.i)));
 }
 
 /* ---------- jobs ---------- */
@@ -227,7 +231,7 @@ $("#scanForm").addEventListener("submit", async (e) => {
     const { job } = await api("/api/scan", { method: "POST", body: JSON.stringify({ path, min_severity: $("#scanSeverity").value, save: true, online: $("#scanOnline").checked }) });
     const done = await pollJob(job, (j) => { text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`; });
     $("#scanProgress").hidden = true;
-    renderResults($("#scanResults"), done.report);
+    renderResults($("#scanResults"), done.report, job);
     statusCache = null;
     toast(done.report.threats ? `${done.report.threats} threat(s) found` : "Scan complete — clean", done.report.threats ? "error" : "success");
   } catch (err) { $("#scanProgress").hidden = true; toast("Scan failed: " + err.message, "error"); }
@@ -249,15 +253,15 @@ $("#sweepForm").addEventListener("submit", async (e) => {
         el("div", { class: "stat-ico", html: ICON.scan }),
         el("div", {}, el("div", { class: "stat-num", text: String(c.files) }), el("div", { class: "stat-label", text: c.name })))));
     }
-    renderResults($("#sweepResults"), done.report);
+    renderResults($("#sweepResults"), done.report, job);
     statusCache = null;
     toast(done.report.threats ? `${done.report.threats} threat(s) found` : "Sweep complete — clean", done.report.threats ? "error" : "success");
   } catch (err) { $("#sweepProgress").hidden = true; toast("Sweep failed: " + err.message, "error"); }
   finally { btn.disabled = false; }
 });
 
-async function quarantineResult(r) {
-  try { await api("/api/quarantine/add", { method: "POST", body: JSON.stringify({ result: r }) }); toast("File quarantined and isolated", "success"); }
+async function quarantineResult(jobId, index) {
+  try { await api("/api/quarantine/add", { method: "POST", body: JSON.stringify({ job: jobId, index }) }); toast("File quarantined and isolated", "success"); }
   catch (err) { toast("Quarantine failed: " + err.message, "error"); }
 }
 
