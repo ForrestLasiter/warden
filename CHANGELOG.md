@@ -6,6 +6,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-27
+
+Security & reliability hardening from a full code review. No breaking changes to
+the CLI surface; new exit code `2` means "a file could not be fully scanned."
+
+### Security
+- **Fixed a PowerShell command injection** in the system sweep: a crafted
+  filename (e.g. in Downloads/Temp) could execute code during `warden sweep`.
+  The path is now passed via an environment variable, never interpolated.
+- **Fixed a crontab command injection** in the scheduler: schedule target/name
+  are now shell-quoted and strictly validated (also blocks Windows task-namespace
+  traversal and cron-line injection via newlines).
+- **Hardened the dashboard:** `Host`-header validation (blocks DNS rebinding),
+  constant-time token compare, 1 MiB body cap, concurrent-job cap, strict
+  history-id validation, robust static-path containment, and quarantine by
+  server-side `{job,index}` handle instead of a client-supplied path (removes an
+  arbitrary-file-deletion vector).
+- **Config secrets:** `~/.warden` and `config.json` (which holds the VirusTotal
+  key) are created owner-only (0o700/0o600) on POSIX.
+
+### Reliability / correctness
+- **Detection now fails safe:** an engine that errors marks the file `unknown`
+  (never `clean`); ClamAV exit code 2 is treated as an error, not clean; scans
+  exit non-zero when a file couldn't be fully scanned.
+- **Durable quarantine:** neutralized copy is fsync'd and the original removed
+  last; the file is re-validated (hash/symlink) before removal; restore refuses
+  to overwrite or follow symlinks; a corrupt index rebuilds from sidecars.
+- **Atomic writes** (temp + fsync + rename) for config, quarantine index,
+  schedules, history, and the reputation cache; malformed config no longer
+  crashes Warden; reputation cache entries expire so stale negatives can't mask
+  new malware.
+- Content and hash now come from a single consistent read for in-memory files.
+
+### Performance
+- Bounded pefile parsing and script-token scanning on large files.
+
 ## [0.3.3] - 2026-09-27
 
 ### Added
@@ -78,7 +114,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ForrestLasiter/warden/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/ForrestLasiter/warden/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/ForrestLasiter/warden/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ForrestLasiter/warden/compare/v0.3.0...v0.3.1
