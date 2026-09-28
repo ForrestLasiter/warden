@@ -172,8 +172,14 @@ class Handler(BaseHTTPRequestHandler):
         }
         return host in allowed
 
+    def _content_length(self) -> int:
+        try:
+            return int(self.headers.get("Content-Length", 0) or 0)
+        except (ValueError, TypeError):
+            return -1
+
     def _read_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        length = self._content_length()
         if length <= 0 or length > _MAX_BODY:
             return {}
         try:
@@ -256,7 +262,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"error": "not found"}, 404)
         if not self._authed():
             return self._send_json({"error": "unauthorized"}, 403)
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        length = self._content_length()
+        if length < 0:
+            return self._send_json({"error": "bad content-length"}, 400)
         if length > _MAX_BODY:
             return self._send_json({"error": "request too large"}, 413)
         body = self._read_body()
@@ -268,6 +276,10 @@ class Handler(BaseHTTPRequestHandler):
             target = str(body.get("path", "")).strip()
             if not target or not Path(target).exists():
                 return self._send_json({"error": "path not found"}, 400)
+            try:
+                Severity.parse(body.get("min_severity", "low"))
+            except (KeyError, ValueError):
+                return self._send_json({"error": "invalid min_severity"}, 400)
             job_id = JOBS.create("scan")
             threading.Thread(
                 target=_run_scan_job,

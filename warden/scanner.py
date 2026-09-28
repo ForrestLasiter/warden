@@ -42,6 +42,14 @@ class Scanner:
         # Content engines need file bytes; hash/clam operate differently.
         self._engines = [self.yara, self.hashes, self.heuristics, self.clamav]
 
+        # An engine that FAILED to load (e.g. a broken YARA ruleset) silently
+        # reduces coverage; record it so scans are reported degraded, not clean.
+        self.engine_warnings: list[str] = []
+        for e in self._engines:
+            load_error = getattr(e, "load_error", None)
+            if load_error:
+                self.engine_warnings.append(f"{e.name}: {load_error}")
+
     # -- introspection ----------------------------------------------------
     def engine_status(self) -> dict[str, str]:
         return {
@@ -63,7 +71,8 @@ class Scanner:
         progress: ProgressCallback | None = None,
     ) -> ScanReport:
         target = Path(target)
-        report = ScanReport(root=str(target), engines=self.active_engines())
+        report = ScanReport(root=str(target), engines=self.active_engines(),
+                            warnings=list(self.engine_warnings))
 
         for path in self._iter_files(target, recursive=recursive):
             result = self._scan_file(path, report)
@@ -81,7 +90,8 @@ class Scanner:
         progress: ProgressCallback | None = None,
     ) -> ScanReport:
         """Scan an explicit list of files (used by the system sweep)."""
-        report = ScanReport(root="<file-list>", engines=self.active_engines())
+        report = ScanReport(root="<file-list>", engines=self.active_engines(),
+                            warnings=list(self.engine_warnings))
         for p in paths:
             path = Path(p)
             if not path.is_file():
@@ -133,8 +143,12 @@ class Scanner:
 
         ctx = ScanContext(path=path, size=size, max_read=self.config.max_scan_bytes)
 
-        # Hash always runs (cheap, streamed, needed for reputation + records).
-        result.sha256 = ctx.sha256()
+        # Hash everything except skip-listed types (media/VM images). Hashing a
+        # 50 GB .vmdk we're not content-scanning would read every byte for a
+        # reputation lookup that never runs on it. Executables/scripts (the
+        # reputation candidates) are never on the skip list, so they're hashed.
+        if ext not in self.config.skip_extensions:
+            result.sha256 = ctx.sha256()
 
         for engine in self._engines:
             if not engine.available():

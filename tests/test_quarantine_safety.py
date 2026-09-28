@@ -96,6 +96,59 @@ def test_restore_refuses_symlinked_parent(tmp_path):
     assert not (elsewhere / "bad.exe").exists()   # nothing written through the link
 
 
+def test_quarantine_fails_closed_without_scan_hash(tmp_path):
+    """No scan hash -> we can't prove which bytes we're storing -> refuse."""
+    victim = tmp_path / "bad.exe"
+    victim.write_bytes(b"payload")
+    result = FileResult(path=str(victim), findings=[Finding("yara", "x", Severity.HIGH)])
+    assert result.sha256 is None
+    with pytest.raises(QuarantineError):
+        _q(tmp_path).quarantine_file(result)
+    assert victim.exists()
+
+
+def test_quarantine_aborts_when_copied_bytes_dont_match(tmp_path, monkeypatch):
+    """If the bytes copied don't hash to the scanned hash, abort and keep original."""
+    victim = tmp_path / "bad.exe"
+    data = b"real bytes"
+    victim.write_bytes(data)
+    result = _threat(victim, data)
+    import warden.quarantine as q
+    monkeypatch.setattr(q, "_xor_copy_atomic", lambda *a, **k: "deadbeef" * 8)
+    with pytest.raises(QuarantineError):
+        _q(tmp_path).quarantine_file(result)
+    assert victim.exists()
+
+
+def test_concurrent_quarantine_keeps_both_entries(tmp_path):
+    """Two concurrent quarantines must not lose each other's index update."""
+    import threading
+    q = Quarantine(Config(data_dir=tmp_path))
+    jobs = []
+    for i in range(2):
+        f = tmp_path / f"m{i}.exe"
+        d = f"malware-{i}".encode()
+        f.write_bytes(d)
+        jobs.append((f, d))
+    errors = []
+
+    def worker(f, d):
+        try:
+            Quarantine(Config(data_dir=tmp_path)).quarantine_file(
+                FileResult(path=str(f), sha256=hashlib.sha256(d).hexdigest(),
+                           findings=[Finding("yara", "x", Severity.HIGH)]))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=jd) for jd in jobs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors
+    assert len(q.list_entries()) == 2
+
+
 def test_corrupt_index_is_rebuilt_from_sidecars(tmp_path):
     data = b"payload"
     victim = tmp_path / "bad.exe"

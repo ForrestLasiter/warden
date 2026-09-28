@@ -31,7 +31,7 @@ from typing import Any
 
 from .config import Config
 from .models import FileResult, now_iso
-from .storage import atomic_write_json, fsync_dir, secure_dir
+from .storage import atomic_write_json, file_lock, fsync_dir, secure_dir
 
 # Fixed XOR key used to neutralize stored bytes. Not secret - its only job is to
 # ensure the quarantined copy isn't a directly runnable PE/script.
@@ -64,6 +64,7 @@ class Quarantine:
         self.config.ensure_dirs()
         self.dir = secure_dir(self.config.quarantine_dir)
         self.index_path = self.dir / "index.json"
+        self._lock_path = self.dir / "index.lock"
 
     # -- index io ---------------------------------------------------------
     def _load_index(self) -> list[dict[str, Any]]:
@@ -111,23 +112,23 @@ class Quarantine:
             raise QuarantineError(f"refusing to quarantine a symlink: {src}")
         if not stat.S_ISREG(st.st_mode):
             raise QuarantineError(f"refusing to quarantine a non-regular file: {src}")
-        if result.sha256:
-            current = _sha256_of(src)
-            if current is not None and current != result.sha256:
-                raise QuarantineError(
-                    f"{src} changed since it was scanned; not quarantining")
+        # Fail CLOSED: without the scan hash we cannot prove we're quarantining
+        # the bytes that were actually scanned.
+        if not result.sha256:
+            raise QuarantineError(f"missing scan hash for {src}; refusing to quarantine")
 
         entry_id = uuid.uuid4().hex[:16]
         blob_path = self.dir / f"{entry_id}.qbin"
         sidecar = self.dir / f"{entry_id}.json"
 
-        # Read the current index BEFORE writing our sidecar, otherwise the
-        # rebuild-from-sidecars path would see the new sidecar and we'd append a
-        # duplicate.
-        index = self._load_index()
-
-        # 1. neutralized blob, durably.
-        _xor_copy_atomic(src, blob_path, mode=0o600)
+        # 1. Copy+neutralize AND hash in a SINGLE read, then verify the copied
+        #    bytes are exactly the bytes that were scanned. This closes the
+        #    validate-then-copy TOCTOU: the stored copy provably matches the
+        #    detection, or we abort without touching the original.
+        copied_sha = _xor_copy_atomic(src, blob_path, mode=0o600)
+        if copied_sha != result.sha256:
+            blob_path.unlink(missing_ok=True)
+            raise QuarantineError(f"{src} changed since it was scanned; not quarantining")
 
         entry = QuarantineEntry(
             id=entry_id,
@@ -139,88 +140,96 @@ class Quarantine:
             findings=[f.to_dict() for f in result.findings],
         )
 
-        # 2. sidecar (source of truth) + 3. index, both durable.
-        atomic_write_json(sidecar, entry.to_dict(), mode=0o600)
-        index.append(entry.to_dict())
-        self._save_index(index)
+        # 2. sidecar (source of truth) + 3. index, under a lock so concurrent
+        #    quarantines can't lose each other's index update. Read the index
+        #    BEFORE writing the sidecar, or the rebuild-from-sidecars path would
+        #    see the new sidecar and we'd append a duplicate.
+        with file_lock(self._lock_path):
+            index = self._load_index()
+            atomic_write_json(sidecar, entry.to_dict(), mode=0o600)
+            index.append(entry.to_dict())
+            self._save_index(index)
 
         # 4. remove the original LAST. If this fails, roll the record back so we
         #    never claim to have quarantined a file that's still in place.
         try:
             os.remove(src)
         except OSError as exc:
-            blob_path.unlink(missing_ok=True)
-            sidecar.unlink(missing_ok=True)
-            self._save_index([e for e in self._load_index() if e["id"] != entry_id])
+            with file_lock(self._lock_path):
+                blob_path.unlink(missing_ok=True)
+                sidecar.unlink(missing_ok=True)
+                self._save_index([e for e in self._load_index() if e["id"] != entry_id])
             raise QuarantineError(f"could not remove original {src}: {exc}") from exc
         return entry
 
     def restore(self, entry_id: str, dest: Path | None = None, *, force: bool = False) -> Path:
-        """Restore a quarantined file, refusing to clobber or follow symlinks."""
-        index = self._load_index()
-        match = next((e for e in index if e["id"] == entry_id), None)
-        if match is None:
-            raise QuarantineError(f"no quarantine entry with id {entry_id}")
-        blob_path = self.dir / f"{entry_id}.qbin"
-        if not blob_path.exists():
-            raise QuarantineError(f"quarantined data missing for {entry_id}")
+        """Restore a quarantined file, refusing to clobber or follow symlinks.
 
-        target = Path(dest) if dest else Path(match["original_path"])
+        ``force`` is an explicit override (overwrite an existing destination) and
+        is intentionally NOT wired to the CLI or dashboard; only a library caller
+        can pass it, and doing so is an informed choice to bypass the guard.
+        """
+        with file_lock(self._lock_path):
+            index = self._load_index()
+            match = next((e for e in index if e["id"] == entry_id), None)
+            if match is None:
+                raise QuarantineError(f"no quarantine entry with id {entry_id}")
+            blob_path = self.dir / f"{entry_id}.qbin"
+            if not blob_path.exists():
+                raise QuarantineError(f"quarantined data missing for {entry_id}")
 
-        # Refuse to write through a symlink anywhere on the path (arbitrary write)
-        # or to overwrite an existing file unless the caller explicitly forces it.
-        for p in [target, *target.parents]:
-            if p.is_symlink():
-                raise QuarantineError(f"refusing to restore through a symlink: {p}")
-        if target.exists() and not force:
-            raise QuarantineError(
-                f"{target} already exists; refusing to overwrite (use force to override)")
+            target = Path(dest) if dest else Path(match["original_path"])
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _xor_copy_atomic(blob_path, target)
+            # Refuse to write through a symlink anywhere on the path, or to
+            # overwrite an existing file unless the caller explicitly forces it.
+            for p in [target, *target.parents]:
+                if p.is_symlink():
+                    raise QuarantineError(f"refusing to restore through a symlink: {p}")
+            if target.exists() and not force:
+                raise QuarantineError(
+                    f"{target} already exists; refusing to overwrite (use force to override)")
 
-        match["restored"] = True
-        match["restored_at"] = now_iso()
-        # keep the sidecar consistent with the index
-        try:
-            atomic_write_json(self.dir / f"{entry_id}.json", match, mode=0o600)
-        except OSError:
-            pass
-        self._save_index(index)
-        return target
+            target.parent.mkdir(parents=True, exist_ok=True)
+            _xor_copy_atomic(blob_path, target)
+
+            match["restored"] = True
+            match["restored_at"] = now_iso()
+            try:
+                atomic_write_json(self.dir / f"{entry_id}.json", match, mode=0o600)
+            except OSError:
+                pass
+            self._save_index(index)
+            return target
 
     def delete(self, entry_id: str) -> None:
         """Permanently remove a quarantined blob. Caller must confirm intent."""
-        index = self._load_index()
-        remaining = [e for e in index if e["id"] != entry_id]
-        if len(remaining) == len(index):
-            raise QuarantineError(f"no quarantine entry with id {entry_id}")
-        (self.dir / f"{entry_id}.qbin").unlink(missing_ok=True)
-        (self.dir / f"{entry_id}.json").unlink(missing_ok=True)
-        self._save_index(remaining)
+        with file_lock(self._lock_path):
+            index = self._load_index()
+            remaining = [e for e in index if e["id"] != entry_id]
+            if len(remaining) == len(index):
+                raise QuarantineError(f"no quarantine entry with id {entry_id}")
+            (self.dir / f"{entry_id}.qbin").unlink(missing_ok=True)
+            (self.dir / f"{entry_id}.json").unlink(missing_ok=True)
+            self._save_index(remaining)
 
 
 # -- helpers -------------------------------------------------------------
-def _sha256_of(path: Path) -> str | None:
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                h.update(chunk)
-    except OSError:
-        return None
-    return h.hexdigest()
+def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | None = None) -> str:
+    """Stream-copy src -> dst (XOR each byte), atomically + fsync'd.
 
-
-def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | None = None) -> None:
-    """Stream-copy src -> dst, XOR-ing every byte, written atomically + fsync'd."""
+    Returns the SHA-256 of the ORIGINAL bytes as they streamed, so the caller
+    can prove the stored copy corresponds to exactly those bytes (closing the
+    validate-then-copy TOCTOU: the hash and the copy come from one read).
+    """
     dst = Path(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tbl = bytes(b ^ key for b in range(256))
+    digest = hashlib.sha256()
     fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=".qtmp-")
     try:
         with os.fdopen(fd, "wb") as fout, open(src, "rb") as fin:
             for chunk in iter(lambda: fin.read(1024 * 1024), b""):
+                digest.update(chunk)
                 fout.write(chunk.translate(tbl))
             fout.flush()
             os.fsync(fout.fileno())
@@ -234,3 +243,4 @@ def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | N
         except OSError:
             pass
         raise
+    return digest.hexdigest()

@@ -252,6 +252,10 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
                 continue
             console.print(f"    [{_style(f.severity)}]-[/] ({f.engine}) [bold]{f.name}[/]: {f.description}")
 
+    # A degraded scan (e.g. a YARA ruleset that failed to compile) is not "clean".
+    for w in report.warnings:
+        console.print(f"[yellow]! engine unavailable:[/] {w} [dim](coverage reduced)[/]")
+
     # Surface files an engine could not finish on - these are 'unknown', NOT clean.
     unknown = report.unknown
     if unknown and not quiet:
@@ -269,7 +273,7 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     summary.add_row("Duration:", f"{dur:.1f}s")
     if report.threats:
         verdict_color, title = "red", "THREATS FOUND"
-    elif unknown or report.errors:
+    elif unknown or report.errors or report.warnings:
         verdict_color, title = "yellow", "COMPLETED WITH ERRORS"
     else:
         verdict_color, title = "green", "CLEAN"
@@ -277,10 +281,10 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
 
 
 def _scan_exit_code(report: ScanReport) -> int:
-    """0 = clean, 1 = threat(s) found, 2 = a file could not be fully scanned."""
+    """0 = clean, 1 = threat(s) found, 2 = scan could not be completed fully."""
     if report.threats:
         return 1
-    if report.engine_errors or report.errors:
+    if report.engine_errors or report.errors or report.warnings:
         return 2
     return 0
 

@@ -141,15 +141,21 @@ dashboard.
 
 - **On-demand, not resident.** No kernel driver, no background hooks. Warden runs
   when you ask it to — real-time protection is what Defender already does well.
-- **Fails safe, not open.** If a detection engine errors on a file, that file is
-  reported **`unknown`**, never `clean`, and the scan exits non-zero (2). A
-  crashed engine can't turn into a false "all clear."
+- **Fails safe, not open.** If a detection engine errors on a file — or a whole
+  engine fails to load (e.g. a broken YARA ruleset) — the result is reported
+  **`unknown`**/degraded, never `clean`, and the scan exits non-zero (2). A
+  crashed or missing engine can't turn into a false "all clear."
 - **Reversible quarantine.** Quarantine never runs a file and never hard-deletes
-  without explicit confirmation. It re-checks the file's hash before acting,
-  writes the neutralized copy durably (fsync) and removes the original **last**,
-  so a crash can't lose your file. Restore refuses to overwrite an existing file
-  or follow a symlink. The stored `.qbin` is XOR-obfuscated to prevent *accidental*
-  execution / AV re-detection — that's obfuscation, not encryption.
+  without explicit confirmation. It hashes the file **as it copies it** and
+  aborts unless those bytes match the scan, writes the neutralized copy durably
+  (fsync) and removes the original **last**, so a crash can't lose your file and
+  the stored copy provably matches what was detected. Restore refuses to
+  overwrite an existing file or follow a symlink. The stored `.qbin` is
+  XOR-obfuscated to prevent *accidental* execution / AV re-detection — that's
+  obfuscation, not encryption.
+- **Careful with external tools.** System utilities Warden shells out to
+  (PowerShell for signature checks, `schtasks`) are invoked by **absolute path**,
+  so a binary planted in the current directory can't hijack them.
 - **Local-first.** Nothing leaves your machine unless you opt into online
   reputation (off by default). When enabled, only a file **hash** is sent — the
   keyless provider resolves it through Cloudflare's DNS-over-HTTPS to the Team

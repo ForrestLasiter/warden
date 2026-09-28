@@ -69,6 +69,29 @@ def test_quarantine_add_rejects_arbitrary_path(httpd, tmp_path):
     assert victim.exists()         # and the file was never touched
 
 
+def test_invalid_min_severity_rejected(httpd, tmp_path):
+    body = f'{{"path": "{tmp_path.as_posix()}", "min_severity": "bogus"}}'
+    assert _req(httpd, "POST", "/api/scan", token=gui._TOKEN, body=body) == 400
+
+
+def test_bad_content_length_rejected(httpd):
+    conn = http.client.HTTPConnection("127.0.0.1", httpd, timeout=5)
+    conn.putrequest("POST", "/api/scan", skip_host=True, skip_accept_encoding=True)
+    conn.putheader("Host", f"127.0.0.1:{httpd}")
+    conn.putheader("X-Warden-Token", gui._TOKEN)
+    conn.putheader("Content-Length", "not-a-number")
+    conn.endheaders()
+    try:
+        resp = conn.getresponse()
+        status = resp.status
+        resp.read()
+    except (ConnectionError, OSError, http.client.HTTPException):
+        conn.close()
+        return  # server refused the malformed request - acceptable
+    conn.close()
+    assert status == 400
+
+
 def test_oversized_body_rejected(httpd):
     # An oversized request must not be processed. The server replies 413 and
     # closes without reading the body; on some platforms tearing down the
