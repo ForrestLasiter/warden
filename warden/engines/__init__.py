@@ -2,6 +2,7 @@
 
 from .base import Engine, ScanContext
 from .clamav import ClamAVEngine
+from .documents import DocumentEngine
 from .hashcheck import HashEngine
 from .heuristics import HeuristicsEngine
 from .yara_engine import YaraEngine
@@ -13,4 +14,5 @@ __all__ = [
     "HashEngine",
     "HeuristicsEngine",
     "ClamAVEngine",
+    "DocumentEngine",
 ]

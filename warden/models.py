@@ -88,6 +88,9 @@ class FileResult:
     findings: list[Finding] = field(default_factory=list)
     scanned: bool = False
     error: str | None = None
+    # Context that isn't a detection: executable format/architecture, code-
+    # signature status, archive walk statistics.
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def verdict(self) -> Severity:
@@ -127,6 +130,7 @@ class FileResult:
             "verdict": int(self.verdict),
             "verdict_label": self.verdict.label,
             "findings": [f.to_dict() for f in self.findings],
+            "meta": self.meta,
         }
 
     @classmethod
@@ -138,6 +142,7 @@ class FileResult:
             findings=[Finding.from_dict(f) for f in d.get("findings", [])],
             scanned=bool(d.get("scanned", False)),
             error=d.get("error"),
+            meta=dict(d["meta"]) if isinstance(d.get("meta"), dict) else {},
         )
 
 
@@ -152,6 +157,9 @@ class ScanReport:
     files_skipped: int = 0
     skipped_ext: int = 0          # skipped because of their extension (media/VM)
     skipped_oversized: int = 0    # skipped deep scan because larger than max_scan_bytes
+    archives_opened: int = 0      # container files whose members were inspected
+    archive_members_scanned: int = 0
+    archive_members_skipped: int = 0   # encrypted, oversized, or past a safety limit
     bytes_scanned: int = 0
     errors: int = 0
     engines: list[str] = field(default_factory=list)
@@ -185,6 +193,9 @@ class ScanReport:
             "files_scanned": self.files_scanned,
             "skipped_by_extension": self.skipped_ext,
             "skipped_oversized": self.skipped_oversized,
+            "archives_opened": self.archives_opened,
+            "archive_members_scanned": self.archive_members_scanned,
+            "archive_members_skipped": self.archive_members_skipped,
             "unreadable_paths": len(self.unreadable),
             "read_or_stat_errors": self.errors,
             "engine_errors": self.engine_errors,

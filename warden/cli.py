@@ -18,6 +18,7 @@ from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.markup import escape as _rich_escape
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -61,6 +62,14 @@ def _style(sev: Severity) -> str:
     return _SEV_STYLE.get(sev, "white")
 
 
+def _esc(value: object) -> str:
+    """Make untrusted text (file names, archive member names, rule metadata)
+    safe to print: neutralize Rich markup and drop control characters, so a
+    crafted name can neither crash the renderer nor inject terminal escapes."""
+    text = "".join(ch if ch.isprintable() else "?" for ch in str(value))
+    return _rich_escape(text)
+
+
 @app.command()
 def version():
     """Print the Warden version."""
@@ -98,6 +107,7 @@ def scan(
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary and threats."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
     online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
+    archives: bool = typer.Option(True, "--archives/--no-archives", help="Look inside zip/tar/gzip archives (bounded)."),
 ):
     """Scan a file or folder for malware on demand."""
     target = Path(path)
@@ -114,9 +124,11 @@ def scan(
     cfg = Config.load()
     if online:
         cfg.online_hash_lookup = True
+    if not archives:
+        cfg.scan_archives = False
     scanner = Scanner(cfg)
     console.print(Panel.fit(
-        f"[bold]Warden[/] scanning [cyan]{target}[/]\n"
+        f"[bold]Warden[/] scanning [cyan]{_esc(target)}[/]\n"
         f"engines: {', '.join(scanner.active_engines()) or 'none!'}",
         border_style="blue",
     ))
@@ -138,7 +150,7 @@ def scan(
         def on_file(result: FileResult):
             nonlocal count
             count += 1
-            progress.update(task, count=count, description=f"scanning {Path(result.path).name[:40]}")
+            progress.update(task, count=count, description=f"scanning {_esc(Path(result.path).name[:40])}")
             if result.is_threat:
                 threats.append(result)
 
@@ -203,7 +215,7 @@ def sweep(
         def on_file(result: FileResult):
             nonlocal count
             count += 1
-            progress.update(task, count=count, description=f"scanning {Path(result.path).name[:40]}")
+            progress.update(task, count=count, description=f"scanning {_esc(Path(result.path).name[:40])}")
             if result.is_threat:
                 threats.append(result)
 
@@ -241,33 +253,34 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     for r in report.results:
         if r.error:
             if not quiet:
-                console.print(f"[dim]! {Path(r.path).name}: {r.error}[/]")
+                console.print(f"[dim]! {_esc(Path(r.path).name)}: {_esc(r.error)}[/]")
             continue
         if r.verdict < threshold or not r.findings:
             continue
         shown += 1
-        header = f"[{_style(r.verdict)}] {r.verdict.label:8}[/] {r.path}"
+        header = f"[{_style(r.verdict)}] {r.verdict.label:8}[/] {_esc(r.path)}"
         console.print(header)
         for f in r.findings:
             if f.severity < threshold:
                 continue
-            console.print(f"    [{_style(f.severity)}]-[/] ({f.engine}) [bold]{f.name}[/]: {f.description}")
+            console.print(f"    [{_style(f.severity)}]-[/] ({_esc(f.engine)}) [bold]{_esc(f.name)}[/]: {_esc(f.description)}")
+        _print_context(r)
 
     # A degraded scan (e.g. a YARA ruleset that failed to compile) is not "clean".
     for w in report.warnings:
-        console.print(f"[yellow]! engine unavailable:[/] {w} [dim](coverage reduced)[/]")
+        console.print(f"[yellow]! engine unavailable:[/] {_esc(w)} [dim](coverage reduced)[/]")
 
     # Surface files an engine could not finish on - these are 'unknown', NOT clean.
     unknown = report.unknown
     if unknown and not quiet:
         for r in unknown:
-            console.print(f"[yellow]? UNKNOWN [/] {r.path} [dim](an engine could not scan this file)[/]")
+            console.print(f"[yellow]? UNKNOWN [/] {_esc(r.path)} [dim](an engine could not scan this file)[/]")
 
     # Coverage gaps: paths we couldn't read at all.
     if report.unreadable and not quiet:
         shown_u = report.unreadable[:15]
         for p in shown_u:
-            console.print(f"[yellow]! unreadable:[/] {p}")
+            console.print(f"[yellow]! unreadable:[/] {_esc(p)}")
         if len(report.unreadable) > len(shown_u):
             console.print(f"[dim]  …and {len(report.unreadable) - len(shown_u)} more unreadable path(s)[/]")
 
@@ -276,6 +289,12 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     summary.add_row("Files scanned:", str(report.files_scanned))
     summary.add_row("Skipped by type:", str(report.skipped_ext))
     summary.add_row("Skipped (too large):", str(report.skipped_oversized))
+    if report.archives_opened:
+        skipped = report.archive_members_skipped
+        summary.add_row(
+            "Archives opened:",
+            f"{report.archives_opened} ({report.archive_members_scanned} member(s) scanned"
+            + (f", [yellow]{skipped} not inspected[/]" if skipped else "") + ")")
     summary.add_row("Threats (medium+):", f"[red]{len(report.threats)}[/]" if report.threats else "0")
     summary.add_row("Unknown (engine error):", f"[yellow]{len(unknown)}[/]" if unknown else "0")
     summary.add_row("Unreadable paths:", f"[yellow]{len(report.unreadable)}[/]" if report.unreadable else "0")
@@ -291,6 +310,24 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     console.print(Panel(summary, title=f"[{verdict_color}]{title}[/]", border_style=verdict_color))
 
 
+def _print_context(r: FileResult) -> None:
+    """Non-detection context for a flagged file: what it is and who signed it."""
+    from .signature import describe
+
+    binary = r.meta.get("binary")
+    if binary:
+        bits = [str(binary.get("format", "?")).upper(), str(binary.get("arch", "?")),
+                str(binary.get("type", ""))]
+        console.print(f"    [dim]file type: {_esc(' '.join(b for b in bits if b))}[/]")
+    sig = r.meta.get("signature")
+    if sig:
+        style = {"valid": "green", "invalid": "red", "untrusted": "yellow"}.get(sig.get("status", ""), "dim")
+        console.print(f"    [{style}]signature: {_esc(describe(sig))}[/]")
+    elif binary and binary.get("format") in ("pe", "macho"):
+        embedded = "present, not verified" if binary.get("signature_embedded") else "none embedded"
+        console.print(f"    [dim]signature: {embedded}[/]")
+
+
 def _scan_exit_code(report: ScanReport) -> int:
     """0 = clean, 1 = threat(s) found, 2 = scan could not be completed fully."""
     if report.threats:
@@ -303,7 +340,7 @@ def _scan_exit_code(report: ScanReport) -> int:
 def _do_quarantine(threats: list[FileResult]):
     console.print(f"\n[yellow]{len(threats)} file(s) flagged.[/] Quarantine isolates them (reversible) and removes the original.")
     for r in threats:
-        console.print(f"  [{_style(r.verdict)}]{r.verdict.label}[/] {r.path}")
+        console.print(f"  [{_style(r.verdict)}]{r.verdict.label}[/] {_esc(r.path)}")
     if not typer.confirm("Quarantine all flagged files now?", default=False):
         console.print("[dim]Skipped quarantine.[/]")
         return
@@ -311,9 +348,9 @@ def _do_quarantine(threats: list[FileResult]):
     for r in threats:
         try:
             entry = q.quarantine_file(r)
-            console.print(f"  [green]quarantined[/] {r.path}  (id {entry.id})")
+            console.print(f"  [green]quarantined[/] {_esc(r.path)}  (id {entry.id})")
         except QuarantineError as exc:
-            console.print(f"  [red]failed[/] {r.path}: {exc}")
+            console.print(f"  [red]failed[/] {_esc(r.path)}: {_esc(exc)}")
 
 
 # -- quarantine subcommands ----------------------------------------------
@@ -333,7 +370,8 @@ def quarantine_list():
     table.add_column("Status")
     for e in entries:
         status_txt = "[yellow]restored[/]" if e.restored else "[red]isolated[/]"
-        table.add_row(e.id, e.verdict, e.quarantined_at.split("T")[0], e.original_path, status_txt)
+        table.add_row(_esc(e.id), _esc(e.verdict), _esc(e.quarantined_at.split("T")[0]),
+                      _esc(e.original_path), status_txt)
     console.print(table)
 
 
@@ -367,6 +405,90 @@ def quarantine_delete(
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
     console.print(f"[green]Deleted[/] {entry_id}")
+
+
+@app.command()
+def inspect(
+    path: str = typer.Argument(..., help="File to describe."),
+    json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Describe a file: hashes, executable format, code signature, archive contents.
+
+    Read-only and offline. Shows what Warden can see about a file without
+    deciding whether it is malicious (use `warden scan` for a verdict).
+    """
+    from . import binfmt
+    from .archive import ArchiveLimits, ArchiveStats, archive_kind, iter_members
+    from .engines.base import ScanContext
+    from .signature import describe, signature_info
+
+    p = Path(path)
+    if not p.is_file():
+        console.print(f"[red]Not a file:[/] {_esc(p)}")
+        raise typer.Exit(2)
+    cfg = Config.load()
+    size = p.stat().st_size
+    ctx = ScanContext(p, size, cfg.max_scan_bytes)
+    data = ctx.data()
+    if ctx.read_error:
+        console.print(f"[red]Could not read file:[/] {_esc(ctx.read_error)}")
+        raise typer.Exit(2)
+    info: dict = {"path": str(p), "size": size, "sha256": ctx.sha256(), "sha1": ctx.sha1()}
+    binary = binfmt.binary_info(data, size)
+    if binary:
+        info["binary"] = binary
+        if binary.get("format") in ("pe", "macho"):
+            info["signature"] = signature_info(p)
+    kind = archive_kind(data)
+    if kind:
+        stats = ArchiveStats()
+        members = [(n, len(b)) for n, b in iter_members(data, p.name, ArchiveLimits(), stats)]
+        info["archive"] = {
+            "kind": kind, "members": [{"name": n, "size": sz} for n, sz in members[:200]],
+            "member_count": len(members), "skipped": stats.members_skipped,
+            "encrypted": stats.encrypted, "notes": stats.reasons,
+        }
+    if json_out:
+        typer.echo(_json.dumps(info, indent=2))
+        return
+
+    table = Table.grid(padding=(0, 2))
+    table.add_column(no_wrap=True)
+    table.add_column(overflow="fold")
+    table.add_row("Path:", _esc(p))
+    table.add_row("Size:", f"{size:,} bytes")
+    table.add_row("SHA-256:", info["sha256"] or "-")
+    table.add_row("SHA-1:", info["sha1"] or "-")
+    if binary:
+        table.add_row("Format:", _esc(f"{str(binary.get('format')).upper()} "
+                                      f"{binary.get('arch', '?')} {binary.get('type', '')}"))
+        if binary.get("interpreter"):
+            table.add_row("Interpreter:", _esc(binary["interpreter"]))
+        names = [s["name"] if isinstance(s, dict) else s
+                 for s in (binary.get("sections") or binary.get("segments") or [])]
+        if names:
+            table.add_row("Sections:", _esc(", ".join(names[:16])))
+        if binary.get("imphash"):
+            table.add_row("Import hash:", _esc(binary["imphash"]))
+        notes = [o.get("id", "?") for o in binary.get("observations", [])]
+        if notes:
+            table.add_row("Observations:", _esc(", ".join(notes)))
+        if "signature" in info:
+            table.add_row("Signature:", _esc(describe(info["signature"])))
+        elif binary.get("format") == "elf":
+            table.add_row("Signature:", "n/a (no platform signing scheme for ELF)")
+    else:
+        table.add_row("Format:", "not a PE / ELF / Mach-O executable")
+    if kind:
+        arc = info["archive"]
+        table.add_row("Archive:", f"{kind}, {arc['member_count']} member(s)"
+                      + (f", {arc['encrypted']} encrypted" if arc["encrypted"] else "")
+                      + (f", {arc['skipped']} not readable" if arc["skipped"] else ""))
+        for m in arc["members"][:15]:
+            table.add_row("", _esc(f"{m['name'][:80]}  ({m['size']:,} bytes)"))
+        if arc["member_count"] > 15:
+            table.add_row("", f"[dim]…and {arc['member_count'] - 15} more[/]")
+    console.print(Panel(table, title="File details", border_style="blue"))
 
 
 @app.command()
@@ -479,7 +601,8 @@ def history_list(
     table.add_column("Target")
     for e in entries:
         threat_cell = f"[red]{e.threats}[/]" if e.threats else "0"
-        table.add_row(e.id, e.kind, e.when.replace("T", " ")[:19], str(e.files_scanned), threat_cell, e.root)
+        table.add_row(_esc(e.id), _esc(e.kind), _esc(e.when.replace("T", " ")[:19]),
+                      str(e.files_scanned), threat_cell, _esc(e.root))
     console.print(table)
 
 
@@ -490,7 +613,7 @@ def history_show(entry_id: str = typer.Argument(..., help="History ID (or prefix
     if data is None:
         console.print(f"[red]No history entry matching[/] {entry_id}")
         raise typer.Exit(2)
-    console.print(f"[bold]{data.get('id')}[/]  kind={data.get('kind')}  target={data.get('root')}")
+    console.print(f"[bold]{_esc(data.get('id'))}[/]  kind={_esc(data.get('kind'))}  target={_esc(data.get('root'))}")
     console.print(f"files scanned: {data.get('files_scanned')}  threats: {data.get('threats')}  "
                   f"duration: {data.get('duration_seconds')}s")
     threats = [r for r in data.get("results", []) if r.get("verdict", 0) >= int(Severity.MEDIUM)]
@@ -499,10 +622,10 @@ def history_show(entry_id: str = typer.Argument(..., help="History ID (or prefix
         return
     for r in threats:
         sev = Severity(r["verdict"])
-        console.print(f"\n[{_style(sev)}] {sev.label}[/] {r['path']}")
+        console.print(f"\n[{_style(sev)}] {sev.label}[/] {_esc(r['path'])}")
         for f in r.get("findings", []):
             fsev = Severity(f["severity"])
-            console.print(f"    [{_style(fsev)}]-[/] ({f['engine']}) [bold]{f['name']}[/]: {f['description']}")
+            console.print(f"    [{_style(fsev)}]-[/] ({_esc(f['engine'])}) [bold]{_esc(f['name'])}[/]: {_esc(f['description'])}")
 
 
 @history_app.command("prune")
@@ -552,7 +675,8 @@ def schedule_list():
     table.add_column("At")
     table.add_column("Target")
     for s in specs:
-        table.add_row(s.name, s.kind, s.frequency, s.time if s.frequency != "hourly" else "-", s.target or "-")
+        table.add_row(_esc(s.name), _esc(s.kind), _esc(s.frequency),
+                      _esc(s.time) if s.frequency != "hourly" else "-", _esc(s.target or "-"))
     console.print(table)
 
 
@@ -573,6 +697,8 @@ _CONFIG_FIELDS = {
     "online_hash_lookup": (bool, "Enable online hash reputation by default."),
     "use_clamav": (bool, "Use ClamAV if its binaries are on PATH."),
     "follow_symlinks": (bool, "Follow symlinks when walking folders."),
+    "scan_archives": (bool, "Look inside zip/tar/gzip archives (bounded)."),
+    "check_signatures": (bool, "Ask the OS for the publisher signature of flagged executables."),
     "max_scan_bytes": (int, "Max file size (bytes) for deep content scanning."),
 }
 # The VirusTotal key is managed separately via `set-vt-key` (OS secret store).

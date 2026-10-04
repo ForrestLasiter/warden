@@ -43,7 +43,9 @@ class ClamAVEngine:
 
     def scan(self, ctx: ScanContext) -> list[Finding]:
         binary = self._daemon or self._standalone
-        if binary is None:
+        if binary is None or ctx.in_memory:
+            # In-memory content (an archive member) has no path to hand ClamAV;
+            # ClamAV unpacks archives itself when it scans the outer file.
             return []
         # --no-summary keeps output to one "path: RESULT" line per file.
         cmd = [binary, "--no-summary", "--stdout", str(ctx.path)]

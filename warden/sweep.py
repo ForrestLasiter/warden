@@ -30,6 +30,7 @@ try:
 except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
+from . import signature as _signature
 from .config import Config
 from .models import FileResult, Finding, ScanReport, Severity
 from .scanner import Scanner
@@ -205,6 +206,7 @@ class SystemSweep:
                     ),
                     meta={"category": category, "signed": False},
                 ))
+                result.meta.setdefault("signature", _signature.signature_info(path))
 
 
 # -- helpers -------------------------------------------------------------
@@ -392,15 +394,8 @@ _SIGN_CACHE: dict[str, bool | None] = {}
 
 
 def _powershell_exe() -> str:
-    """Absolute path to the system PowerShell.
-
-    SECURITY: invoking it by bare name would let Windows' executable search
-    order run a `powershell.exe` planted in the current directory (which the
-    sweep is often launched from, e.g. Downloads). Resolve the trusted copy.
-    """
-    root = os.environ.get("SystemRoot") or r"C:\Windows"
-    p = os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    return p if os.path.isfile(p) else "powershell"
+    """Absolute path to the system PowerShell (see warden.signature)."""
+    return _signature.powershell_exe()
 
 
 def _is_signed(path: Path) -> bool | None:
@@ -413,27 +408,15 @@ def _is_signed(path: Path) -> bool | None:
     key = str(path)
     if key in _SIGN_CACHE:
         return _SIGN_CACHE[key]
-    try:
-        # SECURITY: never interpolate the path into the PowerShell script. A
-        # filename containing a single quote would otherwise break out of the
-        # string literal and execute arbitrary code (an attacker can drop such a
-        # file into Temp/Downloads, which this sweep enumerates). Pass the path
-        # out-of-band via an environment variable, which cannot be parsed as code.
-        proc = subprocess.run(
-            [_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
-             "(Get-AuthenticodeSignature -LiteralPath $env:WARDEN_SIGPATH).Status"],
-            capture_output=True, text=True, timeout=20,
-            env={**os.environ, "WARDEN_SIGPATH": str(path)},
-        )
-        status = proc.stdout.strip()
-        result: bool | None
-        if status == "Valid":
-            result = True
-        elif status in ("NotSigned", "HashMismatch", "NotTrusted", "UnknownError"):
-            result = False
-        else:
-            result = None
-    except (OSError, subprocess.TimeoutExpired):
+    # The path is passed to PowerShell out-of-band (environment variable), never
+    # interpolated into the script: see warden.signature.authenticode_info.
+    status = _signature.authenticode_info(path).get("status")
+    result: bool | None
+    if status == "valid":
+        result = True
+    elif status in ("unsigned", "invalid", "untrusted"):
+        result = False
+    else:
         result = None
     _SIGN_CACHE[key] = result
     return result

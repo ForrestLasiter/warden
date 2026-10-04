@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from ..models import Finding
 
@@ -23,7 +23,7 @@ class ScanContext:
     """
 
     __slots__ = ("path", "size", "max_read", "_data", "_sha256", "_sha1",
-                 "_digests_done", "_read_error")
+                 "_digests_done", "_read_error", "in_memory", "cache")
 
     def __init__(self, path: Path, size: int, max_read: int):
         self.path = path
@@ -34,6 +34,21 @@ class ScanContext:
         self._sha1: str | None = None
         self._digests_done: bool = False
         self._read_error: str | None = None
+        # True when the bytes don't live at ``path`` on disk (an archive member
+        # or a quarantined blob being re-scanned): engines that need a real
+        # file (ClamAV, signature checks) must skip these.
+        self.in_memory: bool = False
+        # Scratch space so engines can share parsed structures (e.g. PE info).
+        self.cache: dict[str, Any] = {}
+
+    @classmethod
+    def from_bytes(cls, name: str | Path, data: bytes) -> ScanContext:
+        """A context over bytes already in memory. ``name`` is only used for
+        extension-based logic and display - nothing is read from disk."""
+        ctx = cls(Path(name), len(data), max(len(data), 1))
+        ctx._data = data
+        ctx.in_memory = True
+        return ctx
 
     @property
     def read_error(self) -> str | None:

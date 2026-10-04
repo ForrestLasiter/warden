@@ -1,7 +1,6 @@
 """Fast, offline unit tests. No real malware, no network, no disk-write of EICAR
 (so Windows Defender can't interfere)."""
 
-from pathlib import Path
 
 from warden.config import BUNDLED_RULES_DIR
 from warden.engines.base import ScanContext
@@ -16,16 +15,8 @@ EICAR = (
 ).encode()
 
 
-class _MemCtx(ScanContext):
-    def __init__(self, data: bytes, name: str = "mem.bin"):
-        self.path = Path(name)
-        self.size = len(data)
-        self.max_read = 1 << 20
-        self._data = data
-        self._sha256 = None
-        self._sha1 = None
-        self._digests_done = False
-        self._read_error = None
+def _MemCtx(data: bytes, name: str = "mem.bin") -> ScanContext:
+    return ScanContext.from_bytes(name, data)
 
 
 def test_yara_detects_eicar():
