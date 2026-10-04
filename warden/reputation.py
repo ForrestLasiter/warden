@@ -60,8 +60,11 @@ class OnlineReputation:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Prefer VirusTotal when a key is present (richer); else keyless Cymru.
+        # Key sources, in order: env var, OS secret store, legacy config field.
+        from . import secrets as _secrets
         self._vt_key = (
             os.environ.get("WARDEN_VT_API_KEY")
+            or _secrets.load_secret("virustotal_api_key")
             or getattr(self.config, "virustotal_api_key", "")
             or ""
         ).strip()

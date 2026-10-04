@@ -124,10 +124,11 @@ class Config:
             "follow_symlinks": self.follow_symlinks,
             "use_clamav": self.use_clamav,
             "online_hash_lookup": self.online_hash_lookup,
-            "virustotal_api_key": self.virustotal_api_key,
             "skip_extensions": sorted(self.skip_extensions),
         }
-        # Atomic + owner-only (the file can contain the VirusTotal API key).
+        # The VirusTotal key is NOT written here anymore - it lives in the OS
+        # secret store (see warden/secrets.py). Saving scrubs any legacy
+        # plaintext key from config.json. Still owner-only, and atomic.
         atomic_write_json(self.config_path, data, mode=0o600)
 
 

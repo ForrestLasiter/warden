@@ -572,12 +572,27 @@ def schedule_remove(name: str = typer.Argument(..., help="Schedule name to remov
 # name -> (type, help)
 _CONFIG_FIELDS = {
     "online_hash_lookup": (bool, "Enable online hash reputation by default."),
-    "virustotal_api_key": (str, "VirusTotal API key (stored in plaintext in config.json)."),
     "use_clamav": (bool, "Use ClamAV if its binaries are on PATH."),
     "follow_symlinks": (bool, "Follow symlinks when walking folders."),
     "max_scan_bytes": (int, "Max file size (bytes) for deep content scanning."),
 }
-_SECRET_FIELDS = {"virustotal_api_key"}
+# The VirusTotal key is managed separately via `set-vt-key` (OS secret store).
+_SECRET_FIELDS: set[str] = set()
+
+
+def _resolve_vt_key() -> tuple[str, str]:
+    """Return (key, source) resolving env -> secret store -> legacy config."""
+    import os as _os
+    from . import secrets as _secrets
+    if _os.environ.get("WARDEN_VT_API_KEY"):
+        return _os.environ["WARDEN_VT_API_KEY"], "environment"
+    stored = _secrets.load_secret("virustotal_api_key")
+    if stored:
+        return stored, _secrets.backend_name()
+    legacy = getattr(Config.load(), "virustotal_api_key", "")
+    if legacy:
+        return legacy, "legacy config.json (run set-vt-key to migrate)"
+    return "", "not set"
 
 
 def _parse_bool(value: str) -> bool:
@@ -599,17 +614,14 @@ def _mask(value: str) -> str:
 def config_show():
     """Show current settings."""
     cfg = Config.load()
-    import os as _os
     table = Table(title="Warden configuration")
     table.add_column("Setting", style="bold")
     table.add_column("Value")
     for name in _CONFIG_FIELDS:
-        val = getattr(cfg, name)
-        shown = _mask(str(val)) if name in _SECRET_FIELDS else str(val)
-        table.add_row(name, shown)
+        table.add_row(name, str(getattr(cfg, name)))
+    vt_key, vt_source = _resolve_vt_key()
+    table.add_row("virustotal_api_key", f"{_mask(vt_key)}  [dim]({vt_source})[/]")
     console.print(table)
-    if not cfg.virustotal_api_key and _os.environ.get("WARDEN_VT_API_KEY"):
-        console.print("[dim]A VirusTotal key is set via the WARDEN_VT_API_KEY environment variable.[/]")
     console.print(f"[dim]Config file: {cfg.config_path}[/]")
 
 
@@ -676,15 +688,18 @@ def config_set_vt_key(
     if not key:
         console.print("[yellow]No key entered; nothing changed.[/]")
         raise typer.Exit(1)
+    from . import secrets as _secrets
+    _secrets.store_secret("virustotal_api_key", key)
     cfg = Config.load()
-    cfg.virustotal_api_key = key
+    # Scrub any legacy plaintext key from config.json and (optionally) enable.
+    cfg.virustotal_api_key = ""
     if enable:
         cfg.online_hash_lookup = True
     cfg.save()
-    console.print(f"[green]Saved VirusTotal key[/] ({_mask(key)}).")
+    console.print(f"[green]Saved VirusTotal key[/] ({_mask(key)}) to the OS secret store "
+                  f"([bold]{_secrets.backend_name()}[/]).")
     if enable:
         console.print("[dim]Online reputation is now enabled by default. Disable with:[/] warden config set online_hash_lookup false")
-    console.print(f"[dim]Stored in {cfg.config_path} (plaintext).[/]")
 
 
 @config_app.command("path")
