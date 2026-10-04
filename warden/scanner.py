@@ -118,6 +118,12 @@ class Scanner:
     def active_engines(self) -> list[str]:
         return [e.name for e in self._engines if e.available()]
 
+    def inactive_engines(self) -> dict[str, str]:
+        """Engines that will not take part in a scan, and why."""
+        status = self.engine_status()
+        return {e.name: status.get(e.name, "inactive")
+                for e in self._engines if not e.available()}
+
     # -- scanning ---------------------------------------------------------
     def scan_path(
         self,
@@ -129,6 +135,7 @@ class Scanner:
     ) -> ScanReport:
         target = Path(target)
         report = ScanReport(root=str(target), engines=self.active_engines(),
+                            inactive_engines=self.inactive_engines(),
                             warnings=list(self.engine_warnings),
                             advisories=list(self.advisories))
 
@@ -156,6 +163,7 @@ class Scanner:
     ) -> ScanReport:
         """Scan an explicit list of files (used by the system sweep)."""
         report = ScanReport(root="<file-list>", engines=self.active_engines(),
+                            inactive_engines=self.inactive_engines(),
                             warnings=list(self.engine_warnings),
                             advisories=list(self.advisories))
         if limits:

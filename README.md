@@ -71,16 +71,36 @@ Double-click it to open the dashboard in your browser; no terminal needed. When
 you're finished, click **Quit Warden** in the page.
 
 The installers verify the download against the release's `SHA256SUMS` and **stop
-if it can't be verified**. They accept options — for example a custom folder, a
-pinned version, no shortcuts, or uninstall:
+if it can't be verified**. Run one again at any time to **upgrade**; the previous
+version is kept and comes back automatically if the new one won't start.
+
+**Prefer to read a script before running it?** Download it, look, then run:
 
 ```bash
-curl -fsSL …/install.sh | sh -s -- --install-dir ~/bin --version v0.5.0 --no-shortcuts
-curl -fsSL …/install.sh | sh -s -- --uninstall
+curl -fsSLO https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.sh
+less install.sh
+sh install.sh
 ```
 ```powershell
-& ([scriptblock]::Create((irm …/install.ps1))) -InstallDir D:\Tools\Warden -NoShortcuts
+irm https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.ps1 -OutFile install.ps1
+notepad .\install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+Options (`sh install.sh --help`):
+
+| Linux / macOS | Windows | |
+| --- | --- | --- |
+| `--install-dir DIR` | `-InstallDir DIR` | Install somewhere else |
+| `--version v0.5.0` | `-Version v0.5.0` | A specific release instead of the latest |
+| `--no-shortcuts` | `-NoShortcuts` | No Desktop / menu launcher |
+| `--no-path` | `-NoPath` | Leave `PATH` alone |
+| `--rollback` | `-Rollback` | Switch back to the previously installed version |
+| `--uninstall` | `-Uninstall` | Remove Warden (your `~/.warden` data is kept) |
+| `--allow-unverified` | `-AllowUnverified` | Install even if the checksum can't be fetched — not advised; a checksum *mismatch* is always refused |
+
+With the one-liner, pass them like `… | sh -s -- --no-shortcuts`, or on Windows
+set e.g. `$env:WARDEN_NO_SHORTCUTS=1` first.
 
 > **You will see a warning the first time you run it.** Warden's binaries are
 > **not** code-signed with a paid certificate, so Windows SmartScreen says
@@ -195,6 +215,7 @@ warden history prune --keep 20        # delete older reports
 warden schedule add nightly --kind sweep --frequency daily --at 03:00
 warden schedule list
 warden schedule doctor                # will my scheduled scans actually run?
+warden schedule test nightly          # run one now, the way the OS scheduler would
 warden schedule remove nightly
 
 warden rules list                     # signed rule packs: install / verify / rollback

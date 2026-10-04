@@ -3,19 +3,28 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.sh | sh
 #
+# Prefer to read it first? Download, inspect, then run:
+#   curl -fsSLO https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.sh
+#   less install.sh
+#   sh install.sh
+#
 # Options (pass with:  ... | sh -s -- <options>):
 #   --install-dir DIR   install the binary here (default ~/.local/bin)
 #   --version TAG        install a specific release tag (default: latest)
 #   --no-shortcuts       don't create desktop/application launchers
 #   --no-path            don't suggest adding the install dir to PATH
 #   --allow-unverified   proceed even if checksums can't be fetched (NOT advised)
-#   --uninstall          remove Warden, its launchers, and quarantine note
+#   --rollback           switch back to the version that was installed before
+#   --uninstall          remove Warden and its launchers (your data is kept)
 #   -h, --help           show this help
+#
+# Running it again upgrades in place (it is safe to re-run: idempotent).
 #
 # Safety: the download is checksum-verified against the release's SHA256SUMS
 # BEFORE anything is installed. If verification can't be performed the install
 # FAILS CLOSED unless --allow-unverified is given. The existing install is never
-# touched until a new binary is verified (safe rollback).
+# touched until a new binary is verified; the previous binary is kept as
+# 'warden.previous' and is restored automatically if the new one won't start.
 set -eu
 
 REPO="ForrestLasiter/warden"
@@ -27,7 +36,7 @@ ACTION=install
 VERSION=latest
 BIN_DIR="${WARDEN_BIN_DIR:-$HOME/.local/bin}"
 
-_help() { sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; }
+_help() { sed -n '2,27p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -35,6 +44,7 @@ while [ $# -gt 0 ]; do
     --no-shortcuts) NO_SHORTCUTS=1 ;;
     --no-path) NO_PATH=1 ;;
     --uninstall) ACTION=uninstall ;;
+    --rollback) ACTION=rollback ;;
     --install-dir) shift; BIN_DIR="${1:?--install-dir needs a path}" ;;
     --install-dir=*) BIN_DIR="${1#*=}" ;;
     --version) shift; VERSION="${1:?--version needs a tag}" ;;
@@ -48,15 +58,40 @@ done
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 TARGET="$BIN_DIR/warden"
+PREVIOUS="$BIN_DIR/warden.previous"
+
+_version_of() {  # path -> prints "x.y.z" or nothing
+  "$1" version 2>/dev/null | awk '{print $NF}' | head -n 1
+}
 
 # --- uninstall --------------------------------------------------------------
 if [ "$ACTION" = "uninstall" ]; then
   if rm -f "$TARGET"; then echo "Removed $TARGET"; fi
+  rm -f "$PREVIOUS"
   rm -f "$HOME/.local/share/applications/warden.desktop" \
         "$HOME/Desktop/warden.desktop" "$HOME/Desktop/Warden.command" 2>/dev/null || true
   echo "Removed Warden launchers."
   echo "Your scan history / quarantine in ~/.warden was left untouched."
   echo "If you added $BIN_DIR to your PATH, remove that line from your shell profile."
+  exit 0
+fi
+
+# --- rollback ---------------------------------------------------------------
+if [ "$ACTION" = "rollback" ]; then
+  if [ ! -f "$PREVIOUS" ]; then
+    echo "No previous version to roll back to ($PREVIOUS not found)." >&2
+    exit 1
+  fi
+  if [ -f "$TARGET" ]; then
+    # Swap, so rolling back twice returns to where you started.
+    mv "$TARGET" "$TARGET.swap"
+    mv "$PREVIOUS" "$TARGET"
+    mv "$TARGET.swap" "$PREVIOUS"
+  else
+    mv "$PREVIOUS" "$TARGET"
+  fi
+  chmod +x "$TARGET"
+  echo "Rolled back. Warden is now version $(_version_of "$TARGET")."
   exit 0
 fi
 
@@ -133,9 +168,36 @@ else
 fi
 
 # --- install (atomic move; existing install untouched until now) ------------
+OLD_VERSION=""
+if [ -f "$TARGET" ]; then
+  OLD_VERSION="$(_version_of "$TARGET")"
+  # Keep the working binary so a bad upgrade can be undone (--rollback).
+  cp -p "$TARGET" "$PREVIOUS"
+fi
+chmod +x "$TMP/$ASSET"
 mv "$TMP/$ASSET" "$TARGET"
-chmod +x "$TARGET"
-echo "Installed Warden to $TARGET"
+
+# The new binary must at least start. If it doesn't, put the old one back.
+NEW_VERSION="$(_version_of "$TARGET")"
+if [ -z "$NEW_VERSION" ]; then
+  if [ -n "$OLD_VERSION" ] && [ -f "$PREVIOUS" ]; then
+    cp -p "$PREVIOUS" "$TARGET"
+    echo "ERROR: the new Warden binary did not start; restored version $OLD_VERSION." >&2
+  else
+    rm -f "$TARGET"
+    echo "ERROR: the downloaded Warden binary did not start on this system; nothing was installed." >&2
+  fi
+  exit 1
+fi
+
+if [ -z "$OLD_VERSION" ]; then
+  echo "Installed Warden $NEW_VERSION to $TARGET"
+elif [ "$OLD_VERSION" = "$NEW_VERSION" ]; then
+  echo "Warden $NEW_VERSION is already installed at $TARGET (reinstalled)."
+else
+  echo "Upgraded Warden $OLD_VERSION -> $NEW_VERSION at $TARGET"
+  echo "(To undo: re-run this installer with --rollback.)"
+fi
 
 if [ "$NO_PATH" -eq 0 ]; then
   case ":$PATH:" in
@@ -177,7 +239,9 @@ DESKTOP
 fi
 
 echo
-"$TARGET" version || true
-echo
-echo "Double-click the 'Warden' launcher to open the dashboard, or run"
-echo "'warden --help' in a terminal for the command line."
+if [ "$NO_SHORTCUTS" -eq 0 ]; then
+  echo "Double-click the 'Warden' launcher to open the dashboard, or run"
+  echo "'warden --help' in a terminal for the command line."
+else
+  echo "Run 'warden gui' to open the dashboard, or 'warden --help' for the command line."
+fi

@@ -2,20 +2,29 @@
 #
 #   irm https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.ps1 | iex
 #
+# Prefer to read it first? Download, inspect, then run:
+#   irm https://raw.githubusercontent.com/ForrestLasiter/warden/main/scripts/install.ps1 -OutFile install.ps1
+#   notepad .\install.ps1
+#   powershell -ExecutionPolicy Bypass -File .\install.ps1
+#
 # Flags (when run as a downloaded file, e.g.  .\install.ps1 -NoShortcuts):
 #   -InstallDir DIR    install here (default %LOCALAPPDATA%\Programs\Warden)
 #   -Version TAG       install a specific release tag (default: latest)
 #   -NoShortcuts       don't create Desktop/Start Menu launchers
 #   -NoPath            don't add the install dir to your PATH
 #   -AllowUnverified   proceed even if checksums can't be fetched (NOT advised)
-#   -Uninstall         remove Warden, its shortcuts, and PATH entry
+#   -Rollback          switch back to the version that was installed before
+#   -Uninstall         remove Warden, its shortcuts, and PATH entry (data is kept)
 # When piped through `irm | iex` use environment variables instead, e.g.
 #   $env:WARDEN_NO_SHORTCUTS=1; irm <url> | iex
+#
+# Running it again upgrades in place (it is safe to re-run: idempotent).
 #
 # Safety: the download is checksum-verified against the release's SHA256SUMS
 # BEFORE install. If verification can't be performed it FAILS CLOSED unless
 # -AllowUnverified. The existing install is untouched until a new binary is
-# verified (safe rollback).
+# verified; the previous binary is kept as 'warden.previous.exe' and is restored
+# automatically if the new one won't start.
 
 param(
     [string] $InstallDir,
@@ -23,6 +32,7 @@ param(
     [switch] $NoShortcuts,
     [switch] $NoPath,
     [switch] $AllowUnverified,
+    [switch] $Rollback,
     [switch] $Uninstall
 )
 
@@ -48,13 +58,27 @@ if ($env:WARDEN_NO_SHORTCUTS)     { $NoShortcuts = $true }
 if ($env:WARDEN_NO_PATH)          { $NoPath = $true }
 if ($env:WARDEN_ALLOW_UNVERIFIED) { $AllowUnverified = $true }
 if ($env:WARDEN_UNINSTALL)        { $Uninstall = $true }
+if ($env:WARDEN_ROLLBACK)         { $Rollback = $true }
 
 if (-not $InstallDir) { $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\Warden' }
 $exe = Join-Path $InstallDir 'warden.exe'
+$previous = Join-Path $InstallDir 'warden.previous.exe'
+
+function Get-WardenVersion([string] $Path) {
+    # "Warden 0.5.0" -> "0.5.0"; empty string if the binary won't run.
+    try {
+        $out = & $Path version 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return '' }
+        return (("$out" -split '\s+') | Where-Object { $_ })[-1]
+    } catch {
+        return ''
+    }
+}
 
 # --- uninstall --------------------------------------------------------------
 if ($Uninstall) {
     if (Test-Path $exe) { Remove-Item $exe -Force; Write-Host "Removed $exe" }
+    if (Test-Path $previous) { Remove-Item $previous -Force }
     foreach ($p in @((Join-Path ([Environment]::GetFolderPath('Programs')) 'Warden.lnk'),
                      (Join-Path ([Environment]::GetFolderPath('Desktop')) 'Warden.lnk'))) {
         if (Test-Path $p) { Remove-Item $p -Force }
@@ -66,6 +90,24 @@ if ($Uninstall) {
         Write-Host "Removed $InstallDir from your PATH."
     }
     Write-Host "Removed Warden shortcuts. Your ~/.warden data was left untouched."
+    return
+}
+
+# --- rollback ---------------------------------------------------------------
+if ($Rollback) {
+    if (-not (Test-Path $previous)) {
+        throw "No previous version to roll back to ($previous not found)."
+    }
+    if (Test-Path $exe) {
+        # Swap, so rolling back twice returns to where you started.
+        $swap = "$exe.swap"
+        Move-Item -Force $exe $swap
+        Move-Item -Force $previous $exe
+        Move-Item -Force $swap $previous
+    } else {
+        Move-Item -Force $previous $exe
+    }
+    Write-Host "Rolled back. Warden is now version $(Get-WardenVersion $exe)."
     return
 }
 
@@ -111,8 +153,38 @@ if ($sums) {
 }
 
 # --- install (existing install untouched until now) -------------------------
-Move-Item -Force $tmp $exe
-Write-Host "Installed Warden to $exe"
+$oldVersion = ''
+if (Test-Path $exe) {
+    $oldVersion = Get-WardenVersion $exe
+    # Keep the working binary so a bad upgrade can be undone (-Rollback).
+    Copy-Item -Force $exe $previous
+}
+try {
+    Move-Item -Force $tmp $exe
+} catch {
+    Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+    throw "Could not replace $exe - is Warden still running? Close it (Quit Warden) and try again. ($($_.Exception.Message))"
+}
+
+# The new binary must at least start. If it doesn't, put the old one back.
+$newVersion = Get-WardenVersion $exe
+if (-not $newVersion) {
+    if ($oldVersion -and (Test-Path $previous)) {
+        Copy-Item -Force $previous $exe
+        throw "The new Warden binary did not start; restored version $oldVersion."
+    }
+    Remove-Item $exe -Force -ErrorAction SilentlyContinue
+    throw "The downloaded Warden binary did not start on this system; nothing was installed."
+}
+
+if (-not $oldVersion) {
+    Write-Host "Installed Warden $newVersion to $exe"
+} elseif ($oldVersion -eq $newVersion) {
+    Write-Host "Warden $newVersion is already installed at $exe (reinstalled)."
+} else {
+    Write-Host "Upgraded Warden $oldVersion -> $newVersion at $exe"
+    Write-Host "(To undo: run this installer again with -Rollback.)"
+}
 
 if (-not $NoPath) {
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -144,7 +216,9 @@ if (-not $NoShortcuts) {
 }
 
 Write-Host ""
-& $exe version
-Write-Host ""
-Write-Host "Double-click the 'Warden' icon on your Desktop to open the dashboard,"
-Write-Host "or run 'warden --help' in a terminal for the command line."
+if (-not $NoShortcuts) {
+    Write-Host "Double-click the 'Warden' icon on your Desktop to open the dashboard,"
+    Write-Host "or run 'warden --help' in a terminal for the command line."
+} else {
+    Write-Host "Run 'warden gui' to open the dashboard, or 'warden --help' for the command line."
+}

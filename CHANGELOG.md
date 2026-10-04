@@ -64,7 +64,10 @@ everything below is additive unless marked **Changed**.
   libsecret) instead of plaintext in `config.json`.
 - Scans can be **cancelled** (Ctrl+C once, or the dashboard's Cancel button) and
   bounded (`--timeout`, `--max-files`).
-- `warden schedule doctor` — checks that scheduled scans will really run.
+- `warden schedule doctor` — checks that scheduled scans will really run
+  (missing/disabled/moved tasks, failed last runs, stopped cron, orphans);
+  `warden schedule test <name>` runs one now in a scheduler-like environment.
+- Scan reports name the engines that did **not** take part, and why.
 
 ### Added — dashboard
 - Strict Content-Security-Policy and hardening headers; cross-origin requests
@@ -82,6 +85,10 @@ everything below is additive unless marked **Changed**.
   **SBOMs** (SPDX + CycloneDX); release tags are protected. `docs/VERIFY.md`.
 - Installers **fail closed** when the download cannot be verified, and accept
   options (install dir, version, no shortcuts, no PATH change, uninstall).
+  Re-running upgrades in place; the previous binary is kept, restored
+  automatically if the new one will not start, and available via
+  `--rollback` / `-Rollback`. Download-then-inspect instructions are in the
+  README and each script's header.
 - CI: ruff, mypy (linux/win32/darwin), bandit, pip-audit, ShellCheck,
   PSScriptAnalyzer, coverage floor; Python 3.10–3.14; Linux x64/ARM64, Windows,
   macOS Apple Silicon and Intel.

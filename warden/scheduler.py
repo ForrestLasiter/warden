@@ -22,6 +22,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -233,6 +234,53 @@ class Scheduler:
                            f"(remove it with: warden schedule remove {name})")
         return out, general
 
+    def test_run(self, name: str, *, timeout: float | None = None,
+                 via_scheduler: bool = False) -> dict[str, Any]:
+        """Run a schedule once, now, the way the OS scheduler would.
+
+        By default the registered command is executed directly, in the kind of
+        stripped-down environment cron provides (no interactive shell profile,
+        a minimal PATH), which is where "works in my terminal, fails at 3am"
+        problems come from. ``via_scheduler`` (Windows) instead asks Task
+        Scheduler to start the real task and waits for its result.
+
+        Returns a dict with the command, exit code, its meaning, the duration
+        and whether a report reached history.
+        """
+        _validate_name(name)
+        spec = next((s for s in self.list() if s.name == name), None)
+        if spec is None:
+            raise SchedulerError(f"no schedule named '{name}'")
+        args = spec.command_args()
+        if not os.path.isfile(args[0]):
+            raise SchedulerError(f"the Warden program it would run no longer exists: {args[0]}")
+        before = _history_ids(self.config)
+        started = time.monotonic()
+        if via_scheduler:
+            if not IS_WINDOWS:
+                raise SchedulerError("--via-scheduler is only available on Windows "
+                                     "(cron has no 'run now'); the default test runs the same command")
+            code = _win_run_now(spec.name, timeout or 3600.0)
+            output = ""
+        else:
+            try:
+                proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                                      env=_scheduler_environment(), stdin=subprocess.DEVNULL)
+            except subprocess.TimeoutExpired:
+                raise SchedulerError(f"test run did not finish within {timeout:.0f}s") from None
+            except OSError as exc:
+                raise SchedulerError(f"could not start the scheduled command: {exc}") from exc
+            code, output = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+        text, failed = _describe_result(code)
+        saved = sorted(_history_ids(self.config) - before)
+        return {
+            "name": spec.name, "command": args, "exit_code": code, "result": text,
+            "ok": not failed and bool(saved), "failed_to_run": failed,
+            "history_saved": bool(saved), "history_ids": saved,
+            "duration_seconds": round(time.monotonic() - started, 1),
+            "output_tail": output.strip().splitlines()[-15:],
+        }
+
     # -- OS integration ---------------------------------------------------
     def _install_os_task(self, spec: ScheduleSpec) -> str:
         if IS_WINDOWS:
@@ -285,6 +333,53 @@ def _last_history_by_kind(config: Config) -> dict[str, str]:
     except OSError:
         pass
     return latest
+
+
+def _history_ids(config: Config) -> set[str]:
+    try:
+        return {p.stem for p in config.history_dir.glob("*.json")}
+    except OSError:
+        return set()
+
+
+def _scheduler_environment() -> dict[str, str]:
+    """The environment a scheduled run can count on.
+
+    cron starts jobs with almost nothing set; Task Scheduler passes the user's
+    environment. Testing under the leaner of the two exposes hidden reliance on
+    a shell profile, a virtualenv activation or a custom PATH.
+    """
+    if IS_WINDOWS:
+        return dict(os.environ)
+    keep = ("HOME", "LOGNAME", "USER", "LANG", "LC_ALL", "TMPDIR",
+            "WARDEN_OFFLINE", "WARDEN_VT_API_KEY")
+    env = {k: os.environ[k] for k in keep if k in os.environ}
+    env["PATH"] = "/usr/bin:/bin"
+    env["SHELL"] = "/bin/sh"
+    return env
+
+
+def _win_run_now(name: str, timeout: float) -> int:
+    """Start the registered task through Task Scheduler and wait for it."""
+    proc = subprocess.run([_schtasks_exe(), "/run", "/tn", _win_taskname(name)],
+                          capture_output=True, text=True, timeout=30)
+    if proc.returncode != 0:
+        raise SchedulerError(f"Task Scheduler could not start the task: "
+                             f"{proc.stderr.strip() or proc.stdout.strip()}")
+    deadline = time.monotonic() + timeout
+    time.sleep(1.0)
+    while time.monotonic() < deadline:
+        info = _win_task_info(name)
+        if info is None:
+            raise SchedulerError("the task disappeared while it was being tested")
+        try:
+            code = int(info.get("LastTaskResult", 0))
+        except (TypeError, ValueError):
+            code = 0
+        if str(info.get("State", "")).lower() != "running" and code != _TASK_RUNNING:
+            return code
+        time.sleep(1.0)
+    raise SchedulerError(f"the task was still running after {timeout:.0f}s")
 
 
 def _parse_iso(value: str) -> datetime | None:

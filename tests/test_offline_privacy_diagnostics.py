@@ -328,3 +328,79 @@ def test_schedule_doctor_cli(home, monkeypatch):
     data = json.loads(res.output)
     assert data["ok"] is False and data["schedules"][0]["name"] == "nightly"
     assert runner.invoke(app, ["schedule", "doctor"]).exit_code == 1
+
+
+# -- scheduled-task testing ---------------------------------------------
+def test_schedule_test_runs_the_registered_command(home, tmp_path):
+    target = tmp_path / "docs"
+    target.mkdir()
+    (target / "a.txt").write_text("hello")
+    s = Scheduler()
+    _register(s, ScheduleSpec(name="docs", kind="scan", target=str(target)))
+
+    res = s.test_run("docs", timeout=120)
+    assert res["exit_code"] == 0 and res["ok"] is True
+    assert res["history_saved"] and len(res["history_ids"]) == 1
+    assert res["command"][-1] == str(target) and "--save" in res["command"]
+
+    with pytest.raises(scheduler.SchedulerError, match="no schedule named"):
+        s.test_run("missing")
+    with pytest.raises(scheduler.SchedulerError):
+        s.test_run("bad name!")
+
+
+def test_schedule_test_reports_threats_as_a_working_run(home, tmp_path):
+    target = tmp_path / "dl"
+    target.mkdir()
+    (target / "invoice.pdf.exe").write_bytes(b"x")
+    s = Scheduler()
+    _register(s, ScheduleSpec(name="dl", kind="scan", target=str(target)))
+    res = s.test_run("dl", timeout=120)
+    assert res["exit_code"] == 1 and "THREATS FOUND" in res["result"]
+    assert res["ok"] is True                 # the schedule works; it found something
+
+
+def test_schedule_test_detects_a_run_that_cannot_start(home, tmp_path, monkeypatch):
+    s = Scheduler()
+    _register(s, ScheduleSpec(name="gone", kind="sweep"))
+    monkeypatch.setattr(scheduler, "_warden_invocation", lambda: [str(tmp_path / "no-such-warden")])
+    with pytest.raises(scheduler.SchedulerError, match="no longer exists"):
+        s.test_run("gone")
+
+
+def test_schedule_test_cli(home, tmp_path, monkeypatch):
+    target = tmp_path / "t"
+    target.mkdir()
+    _register(Scheduler(), ScheduleSpec(name="t", kind="scan", target=str(target)))
+    res = runner.invoke(app, ["schedule", "test", "t", "--json"])
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)["history_saved"] is True
+    assert runner.invoke(app, ["schedule", "test", "nope"]).exit_code == 1
+    if not scheduler.IS_WINDOWS:
+        assert runner.invoke(app, ["schedule", "test", "t", "--via-scheduler"]).exit_code == 1
+
+
+def test_scheduler_environment_is_minimal_on_posix(monkeypatch):
+    monkeypatch.setattr(scheduler, "IS_WINDOWS", False)
+    monkeypatch.setenv("HOME", "/home/u")
+    monkeypatch.setenv("SOME_SHELL_PROFILE_VAR", "x")
+    env = scheduler._scheduler_environment()
+    assert env["PATH"] == "/usr/bin:/bin" and env["HOME"] == "/home/u"
+    assert "SOME_SHELL_PROFILE_VAR" not in env
+
+
+# -- coverage: inactive engines -----------------------------------------
+def test_report_names_engines_that_did_not_run(tmp_path):
+    cfg = Config(data_dir=tmp_path / "data")
+    cfg.use_clamav = False
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    report = Scanner(cfg).scan_path(f)
+    assert "clamav" in report.inactive_engines and "disabled" in report.inactive_engines["clamav"]
+    assert "hash" in report.inactive_engines            # no denylist loaded
+    cov = report.coverage()
+    assert set(cov["engines_active"]) >= {"yara", "heuristics", "documents"}
+    assert "clamav" in cov["engines_inactive"]
+    assert report.coverage_complete                     # optional engines being off is not a gap
+    res = runner.invoke(app, ["scan", str(f)])
+    assert "Engines used" in res.output and "Engines not used" in res.output

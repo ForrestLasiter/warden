@@ -350,6 +350,10 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     dur = report.duration_seconds or 0.0
     summary = Table.grid(padding=(0, 2))
     summary.add_row("Files scanned:", str(report.files_scanned))
+    summary.add_row("Engines used:", _esc(", ".join(report.engines) or "none"))
+    if report.inactive_engines:
+        summary.add_row("Engines not used:", "[dim]" + _esc("; ".join(
+            f"{name} ({why})" for name, why in report.inactive_engines.items())) + "[/]")
     summary.add_row("Skipped by type:", str(report.skipped_ext))
     summary.add_row("Skipped (too large):", str(report.skipped_oversized))
     if report.archives_opened:
@@ -1195,6 +1199,43 @@ def schedule_doctor(
     if not problems:
         console.print("[green]All scheduled scans look healthy.[/]")
     raise typer.Exit(1 if problems else 0)
+
+
+@schedule_app.command("test")
+def schedule_test(
+    name: str = typer.Argument(..., help="Schedule to run once, now."),
+    timeout: float = typer.Option(0, "--timeout", min=0, help="Give up after this many seconds (0 = wait)."),
+    via_scheduler: bool = typer.Option(False, "--via-scheduler", help="Windows: start the real task through Task Scheduler."),
+    json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Run a scheduled scan once, right now, the way the OS scheduler would.
+
+    Uses the exact registered command in a stripped-down environment (like
+    cron's), then confirms a report reached history. Exit code 0 if it ran and
+    saved a report (even if it found threats), 1 if it could not run properly.
+    """
+    try:
+        with console.status(f"Running schedule '{_esc(name)}' now…"):
+            res = Scheduler().test_run(name, timeout=timeout or None, via_scheduler=via_scheduler)
+    except SchedulerError as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(1)
+    if json_out:
+        typer.echo(_json.dumps(res, indent=2))
+        raise typer.Exit(0 if res["ok"] else 1)
+    console.print(f"[dim]Ran:[/] {_esc(' '.join(res['command']))}")
+    style = "red" if res["failed_to_run"] else ("yellow" if res["exit_code"] else "green")
+    console.print(f"[{style}]Result:[/] {_esc(res['result'])} "
+                  f"[dim](exit code {res['exit_code']}, {res['duration_seconds']}s)[/]")
+    if res["history_saved"]:
+        console.print(f"[green]A report was saved to history[/] ({_esc(', '.join(res['history_ids']))}).")
+    else:
+        console.print("[red]No report reached history[/] - a scheduled run would leave no record.")
+    if not res["ok"] and res["output_tail"]:
+        console.print("[dim]Last output:[/]")
+        for line in res["output_tail"]:
+            console.print(f"  {_esc(line)}")
+    raise typer.Exit(0 if res["ok"] else 1)
 
 
 @schedule_app.command("remove")

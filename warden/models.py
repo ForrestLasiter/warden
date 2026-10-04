@@ -163,6 +163,9 @@ class ScanReport:
     bytes_scanned: int = 0
     errors: int = 0
     engines: list[str] = field(default_factory=list)
+    # Engines that did not take part, with the reason (e.g. "clamav": "not
+    # installed (optional)"). Not a failure - but the reader should know.
+    inactive_engines: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)  # e.g. an engine failed to load
     # Things worth telling the user that do NOT make the scan incomplete
     # (stale ClamAV signatures, online lookups suppressed by offline mode).
@@ -199,6 +202,8 @@ class ScanReport:
             "complete": self.coverage_complete,
             "stopped": self.stopped,
             "files_scanned": self.files_scanned,
+            "engines_active": self.engines,
+            "engines_inactive": self.inactive_engines,
             "skipped_by_extension": self.skipped_ext,
             "skipped_oversized": self.skipped_oversized,
             "archives_opened": self.archives_opened,
@@ -237,6 +242,7 @@ class ScanReport:
             "bytes_scanned": self.bytes_scanned,
             "errors": self.errors,
             "engines": self.engines,
+            "inactive_engines": self.inactive_engines,
             "warnings": self.warnings,
             "advisories": self.advisories,
             "stopped": self.stopped,
