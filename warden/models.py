@@ -150,10 +150,13 @@ class ScanReport:
     finished: str | None = None
     files_scanned: int = 0
     files_skipped: int = 0
+    skipped_ext: int = 0          # skipped because of their extension (media/VM)
+    skipped_oversized: int = 0    # skipped deep scan because larger than max_scan_bytes
     bytes_scanned: int = 0
     errors: int = 0
     engines: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)  # e.g. an engine failed to load
+    unreadable: list[str] = field(default_factory=list)  # dirs/files we couldn't read
     results: list[FileResult] = field(default_factory=list)
 
     @property
@@ -168,6 +171,25 @@ class ScanReport:
     @property
     def engine_errors(self) -> int:
         return sum(1 for r in self.results if r.errored)
+
+    @property
+    def coverage_complete(self) -> bool:
+        """False if any part of the scan couldn't be completed (unreadable paths,
+        read/stat errors, engine failures, or an engine that failed to load)."""
+        return not (self.unreadable or self.errors or self.engine_errors or self.warnings)
+
+    def coverage(self) -> dict[str, Any]:
+        """A machine-readable summary of what was and wasn't fully scanned."""
+        return {
+            "complete": self.coverage_complete,
+            "files_scanned": self.files_scanned,
+            "skipped_by_extension": self.skipped_ext,
+            "skipped_oversized": self.skipped_oversized,
+            "unreadable_paths": len(self.unreadable),
+            "read_or_stat_errors": self.errors,
+            "engine_errors": self.engine_errors,
+            "inactive_or_failed_engines": self.warnings,
+        }
 
     @property
     def duration_seconds(self) -> float | None:
@@ -191,10 +213,14 @@ class ScanReport:
             "duration_seconds": self.duration_seconds,
             "files_scanned": self.files_scanned,
             "files_skipped": self.files_skipped,
+            "skipped_ext": self.skipped_ext,
+            "skipped_oversized": self.skipped_oversized,
             "bytes_scanned": self.bytes_scanned,
             "errors": self.errors,
             "engines": self.engines,
             "warnings": self.warnings,
+            "unreadable": self.unreadable,
+            "coverage": self.coverage(),
             "counts_by_verdict": self.counts_by_verdict(),
             "threats": len(self.threats),
             "unknown": len(self.unknown),

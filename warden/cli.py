@@ -264,19 +264,29 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
         for r in unknown:
             console.print(f"[yellow]? UNKNOWN [/] {r.path} [dim](an engine could not scan this file)[/]")
 
+    # Coverage gaps: paths we couldn't read at all.
+    if report.unreadable and not quiet:
+        shown_u = report.unreadable[:15]
+        for p in shown_u:
+            console.print(f"[yellow]! unreadable:[/] {p}")
+        if len(report.unreadable) > len(shown_u):
+            console.print(f"[dim]  …and {len(report.unreadable) - len(shown_u)} more unreadable path(s)[/]")
+
     dur = report.duration_seconds or 0.0
     summary = Table.grid(padding=(0, 2))
     summary.add_row("Files scanned:", str(report.files_scanned))
-    summary.add_row("Skipped (size/type):", str(report.files_skipped))
+    summary.add_row("Skipped by type:", str(report.skipped_ext))
+    summary.add_row("Skipped (too large):", str(report.skipped_oversized))
     summary.add_row("Threats (medium+):", f"[red]{len(report.threats)}[/]" if report.threats else "0")
     summary.add_row("Unknown (engine error):", f"[yellow]{len(unknown)}[/]" if unknown else "0")
+    summary.add_row("Unreadable paths:", f"[yellow]{len(report.unreadable)}[/]" if report.unreadable else "0")
     summary.add_row("Findings shown:", str(shown))
     summary.add_row("Read/access errors:", str(report.errors))
     summary.add_row("Duration:", f"{dur:.1f}s")
     if report.threats:
         verdict_color, title = "red", "THREATS FOUND"
-    elif unknown or report.errors or report.warnings:
-        verdict_color, title = "yellow", "COMPLETED WITH ERRORS"
+    elif not report.coverage_complete:
+        verdict_color, title = "yellow", "INCOMPLETE — COVERAGE GAPS"
     else:
         verdict_color, title = "green", "CLEAN"
     console.print(Panel(summary, title=f"[{verdict_color}]{title}[/]", border_style=verdict_color))
@@ -286,7 +296,7 @@ def _scan_exit_code(report: ScanReport) -> int:
     """0 = clean, 1 = threat(s) found, 2 = scan could not be completed fully."""
     if report.threats:
         return 1
-    if report.engine_errors or report.errors or report.warnings:
+    if not report.coverage_complete:
         return 2
     return 0
 

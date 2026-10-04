@@ -85,9 +85,11 @@ class Quarantine:
             if jf.name == "index.json":
                 continue
             try:
-                entries.append(json.loads(jf.read_text(encoding="utf-8")))
+                data = json.loads(jf.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
+            if isinstance(data, dict) and "id" in data:
+                entries.append(data)
         if entries:
             self._save_index(entries)
         return entries
@@ -96,7 +98,12 @@ class Quarantine:
         atomic_write_json(self.index_path, entries, mode=0o600)
 
     def list_entries(self) -> list[QuarantineEntry]:
-        return [QuarantineEntry(**e) for e in self._load_index()]
+        out: list[QuarantineEntry] = []
+        for e in self._load_index():
+            ent = _entry_from_dict(e)
+            if ent is not None:
+                out.append(ent)
+        return out
 
     # -- actions ----------------------------------------------------------
     def quarantine_file(self, result: FileResult) -> QuarantineEntry:
@@ -158,7 +165,7 @@ class Quarantine:
             with file_lock(self._lock_path):
                 blob_path.unlink(missing_ok=True)
                 sidecar.unlink(missing_ok=True)
-                self._save_index([e for e in self._load_index() if e["id"] != entry_id])
+                self._save_index([e for e in self._load_index() if e.get("id") != entry_id])
             raise QuarantineError(f"could not remove original {src}: {exc}") from exc
         return entry
 
@@ -171,7 +178,7 @@ class Quarantine:
         """
         with file_lock(self._lock_path):
             index = self._load_index()
-            match = next((e for e in index if e["id"] == entry_id), None)
+            match = next((e for e in index if e.get("id") == entry_id), None)
             if match is None:
                 raise QuarantineError(f"no quarantine entry with id {entry_id}")
             blob_path = self.dir / f"{entry_id}.qbin"
@@ -205,7 +212,7 @@ class Quarantine:
         """Permanently remove a quarantined blob. Caller must confirm intent."""
         with file_lock(self._lock_path):
             index = self._load_index()
-            remaining = [e for e in index if e["id"] != entry_id]
+            remaining = [e for e in index if e.get("id") != entry_id]
             if len(remaining) == len(index):
                 raise QuarantineError(f"no quarantine entry with id {entry_id}")
             (self.dir / f"{entry_id}.qbin").unlink(missing_ok=True)
@@ -214,6 +221,17 @@ class Quarantine:
 
 
 # -- helpers -------------------------------------------------------------
+def _entry_from_dict(e: Any) -> QuarantineEntry | None:
+    """Build a QuarantineEntry, tolerating malformed/partial index entries."""
+    if not isinstance(e, dict) or "id" not in e:
+        return None
+    kw = {k: v for k, v in e.items() if k in QuarantineEntry.__dataclass_fields__}
+    try:
+        return QuarantineEntry(**kw)
+    except TypeError:
+        return None
+
+
 def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | None = None) -> str:
     """Stream-copy src -> dst (XOR each byte), atomically + fsync'd.
 

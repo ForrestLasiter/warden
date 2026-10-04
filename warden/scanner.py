@@ -10,6 +10,10 @@ import os
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
+# Directory recursion safety limits (defend against symlink cycles / pathological
+# trees even when follow_symlinks is on).
+_MAX_DEPTH = 100
+
 from .config import Config, BUNDLED_RULES_DIR
 from .engines import (
     ClamAVEngine,
@@ -74,7 +78,7 @@ class Scanner:
         report = ScanReport(root=str(target), engines=self.active_engines(),
                             warnings=list(self.engine_warnings))
 
-        for path in self._iter_files(target, recursive=recursive):
+        for path in self._iter_files(target, recursive=recursive, report=report):
             result = self._scan_file(path, report)
             report.results.append(result)
             if progress:
@@ -104,32 +108,72 @@ class Scanner:
         return report
 
     # -- internals --------------------------------------------------------
-    def _iter_files(self, target: Path, *, recursive: bool) -> Iterator[Path]:
+    def _iter_files(self, target: Path, *, recursive: bool, report: ScanReport) -> Iterator[Path]:
+        follow = self.config.follow_symlinks
+        try:
+            is_link = target.is_symlink()
+        except OSError:
+            is_link = False
+
         if target.is_file():
+            if is_link and not follow:
+                report.unreadable.append(f"{target} (symlink; follow_symlinks is off)")
+                return
             yield target
             return
         if not target.is_dir():
+            if target.exists():
+                report.unreadable.append(str(target))
             return
+        if is_link and not follow:
+            report.unreadable.append(f"{target} (symlinked directory; follow_symlinks is off)")
+            return
+
         if not recursive:
-            for entry in _safe_scandir(target):
-                if entry.is_file(follow_symlinks=self.config.follow_symlinks):
-                    yield Path(entry.path)
-            return
-        # Manual walk so we control symlink following and error handling.
-        stack = [target]
-        while stack:
-            current = stack.pop()
-            for entry in _safe_scandir(current):
+            for entry in _scandir_or_record(target, report):
                 try:
-                    if entry.is_dir(follow_symlinks=self.config.follow_symlinks):
-                        stack.append(Path(entry.path))
-                    elif entry.is_file(follow_symlinks=self.config.follow_symlinks):
+                    if entry.is_file(follow_symlinks=follow):
                         yield Path(entry.path)
                 except OSError:
+                    report.unreadable.append(entry.path)
+            return
+
+        # Manual walk with a cycle guard (visited dir identities) and depth limit.
+        visited: set = set()
+        stack: list[tuple[Path, int]] = [(target, 0)]
+        while stack:
+            current, depth = stack.pop()
+            if depth > _MAX_DEPTH:
+                report.unreadable.append(f"{current} (max depth {_MAX_DEPTH} reached)")
+                continue
+            key = _dir_identity(current)
+            if key is not None:
+                if key in visited:
+                    continue  # symlink/junction cycle - already walked this dir
+                visited.add(key)
+            for entry in _scandir_or_record(current, report):
+                try:
+                    if entry.is_dir(follow_symlinks=follow):
+                        stack.append((Path(entry.path), depth + 1))
+                    elif entry.is_file(follow_symlinks=follow):
+                        yield Path(entry.path)
+                except OSError:
+                    report.unreadable.append(entry.path)
                     continue
 
     def _scan_file(self, path: Path, report: ScanReport) -> FileResult:
         result = FileResult(path=str(path))
+        # Reject an explicitly-supplied symlink file when not following symlinks
+        # (covers the system sweep, which passes paths straight to _scan_file).
+        if not self.config.follow_symlinks:
+            try:
+                if path.is_symlink():
+                    result.error = "symlink skipped (follow_symlinks is off)"
+                    report.unreadable.append(f"{path} (symlink)")
+                    report.errors += 1
+                    return result
+            except OSError:
+                pass
         try:
             size = path.stat().st_size
         except OSError as exc:
@@ -139,7 +183,9 @@ class Scanner:
         result.size = size
 
         ext = path.suffix.lower()
-        deep = ext not in self.config.skip_extensions and size <= self.config.max_scan_bytes
+        skip_ext = ext in self.config.skip_extensions
+        too_big = size > self.config.max_scan_bytes
+        deep = not skip_ext and not too_big
 
         ctx = ScanContext(path=path, size=size, max_read=self.config.max_scan_bytes)
 
@@ -147,7 +193,7 @@ class Scanner:
         # 50 GB .vmdk we're not content-scanning would read every byte for a
         # reputation lookup that never runs on it. Executables/scripts (the
         # reputation candidates) are never on the skip list, so they're hashed.
-        if ext not in self.config.skip_extensions:
+        if not skip_ext:
             result.sha256 = ctx.sha256()
 
         for engine in self._engines:
@@ -172,15 +218,37 @@ class Scanner:
         report.bytes_scanned += size
         if not deep:
             report.files_skipped += 1
+            if skip_ext:
+                report.skipped_ext += 1
+            elif too_big:
+                report.skipped_oversized += 1
         return result
 
 
-def _safe_scandir(path: Path):
+def _scandir_or_record(path: Path, report: ScanReport):
+    """os.scandir, recording the directory as unreadable instead of silently
+    swallowing the error (so the scan can report incomplete coverage)."""
     try:
         with os.scandir(path) as it:
             yield from it
-    except OSError:
+    except OSError as exc:
+        report.unreadable.append(f"{path} ({exc.strerror or exc})")
         return
+
+
+def _dir_identity(path: Path):
+    """A stable identity for a directory for cycle detection. Uses (device, inode)
+    where available, else the resolved path string."""
+    try:
+        st = path.stat()
+        if st.st_ino:
+            return (st.st_dev, st.st_ino)
+    except OSError:
+        return None
+    try:
+        return str(path.resolve())
+    except OSError:
+        return None
 
 
 def _engine_error(engine: str, exc: Exception):

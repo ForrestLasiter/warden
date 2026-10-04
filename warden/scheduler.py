@@ -108,7 +108,16 @@ class Scheduler:
         atomic_write_json(self.registry, specs)
 
     def list(self) -> list[ScheduleSpec]:
-        return [ScheduleSpec(**s) for s in self._load()]
+        out: list[ScheduleSpec] = []
+        for s in self._load():
+            if not isinstance(s, dict) or "name" not in s:
+                continue
+            kw = {k: v for k, v in s.items() if k in ScheduleSpec.__dataclass_fields__}
+            try:
+                out.append(ScheduleSpec(**kw))
+            except TypeError:
+                continue  # malformed entry - skip rather than crash
+        return out
 
     # -- public actions ---------------------------------------------------
     def add(self, spec: ScheduleSpec) -> str:
