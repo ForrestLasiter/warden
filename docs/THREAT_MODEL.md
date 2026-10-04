@@ -273,6 +273,9 @@ review; a compromised maintainer account defeats it. The binaries are **not Auth
 (those require paid certificates, which this project does not buy), so Windows
 SmartScreen and macOS Gatekeeper will warn. Verify with [VERIFY.md](VERIFY.md).
 `curl | sh` / `irm | iex` trust GitHub's TLS for the *installer script* itself.
+The **Intel macOS** binary's crypto component is compiled at build time against
+the build machine's OpenSSL (no upstream wheel exists), so that part is less
+strictly pinned than the other platforms - see [RELEASING.md](RELEASING.md).
 
 ## 5. Explicitly out of scope
 

@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-10-04
+
+The first complete release of the 0.5 series. **v0.5.0 was tagged but never fully
+published:** its Intel macOS build failed, which left the release without
+`SHA256SUMS`, so it was withdrawn to a pre-release. Everything listed under 0.5.0
+below ships here.
+
+### Fixed
+- **Intel macOS binary:** the crypto library publishes no Intel-macOS wheel, so it
+  is compiled during the build; linked dynamically it loaded the wrong
+  `libssl.3.dylib` inside the packaged binary and failed. OpenSSL is now linked
+  statically for that build, and the library is told not to require OpenSSL's
+  optional legacy provider.
+- **Releases publish all-or-nothing.** Binaries are no longer attached as each
+  platform finishes; a single publishing step uploads binaries, checksums,
+  signature and SBOMs together only after every platform has built and passed
+  its smoke test. A partial build can no longer produce a release that the
+  fail-closed installers refuse.
+- When the crypto library cannot be loaded, the error now says why.
+
 ## [0.5.0] - 2026-10-04
 
 A hardening and capability release. Existing commands and options keep working;
@@ -313,7 +333,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ForrestLasiter/warden/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ForrestLasiter/warden/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...v0.4.4

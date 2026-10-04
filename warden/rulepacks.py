@@ -54,6 +54,11 @@ from .config import Config
 from .models import now_iso
 from .storage import atomic_write_bytes, atomic_write_json, file_lock, secure_dir
 
+# Warden uses only modern primitives (Ed25519, AES-GCM, HKDF, scrypt). Telling
+# the library not to load OpenSSL's "legacy" provider keeps it from failing at
+# import on machines where that optional module isn't present.
+os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
+
 try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
@@ -62,8 +67,12 @@ try:
         Ed25519PublicKey,
     )
     _CRYPTO = True
-except Exception:  # pragma: no cover - cryptography is a declared dependency
+    _CRYPTO_ERROR = ""
+except Exception as _exc:  # pragma: no cover - cryptography is a declared dependency
     _CRYPTO = False
+    # Keep the reason: "is it missing, or did it fail to load?" is the first
+    # question when this is hit inside a packaged build.
+    _CRYPTO_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 FORMAT = 1
 _DOMAIN = b"warden-rulepack-v1\n"
@@ -99,7 +108,8 @@ class PackInfo:
 # -- keys ----------------------------------------------------------------
 def _need_crypto() -> None:
     if not _CRYPTO:
-        raise RulePackError("the 'cryptography' package is required for rule-pack signatures")
+        raise RulePackError("the 'cryptography' package is required for rule-pack signatures"
+                            + (f" (it failed to load: {_CRYPTO_ERROR})" if _CRYPTO_ERROR else ""))
 
 
 def key_id(public_key: bytes) -> str:

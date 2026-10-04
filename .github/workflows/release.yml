@@ -10,8 +10,10 @@ on:
       - "v*"
   workflow_dispatch:
 
+# Build jobs only read the repository. The single publishing job at the end is
+# the only one that can write to the release.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -49,6 +51,17 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
+          if [ "${{ matrix.asset }}" = "warden-macos-x64" ]; then
+            # The crypto library publishes no Intel-macOS wheel any more, so pip
+            # compiles it here (from the hash-locked sdist). Link OpenSSL
+            # STATICALLY: a dynamic link would name libssl.3.dylib, which collides
+            # inside the bundle with the different libssl.3.dylib Python itself
+            # ships - and the binding then fails to load.
+            export OPENSSL_STATIC=1
+            OPENSSL_DIR="$(brew --prefix openssl@3)"
+            export OPENSSL_DIR
+            echo "cryptography will be built against static $("$OPENSSL_DIR/bin/openssl" version)"
+          fi
           # Hash-locked, version-pinned deps (incl. PyInstaller) so a compromised
           # or broken upstream release can't enter a published binary.
           pip install --require-hashes -r requirements-release.txt
@@ -68,7 +81,9 @@ jobs:
           "$BIN" --offline privacy --json > /dev/null
           # The bundled crypto library loads (rule-pack signatures, quarantine encryption).
           tmp="$(mktemp -d)"
-          "$BIN" rules keygen smoke --out "$tmp"
+          # (OPENSSL_MODULES points nowhere to mimic a machine that has none of
+          # the build host's OpenSSL files.)
+          OPENSSL_MODULES="$tmp/no-such-dir" "$BIN" rules keygen smoke --out "$tmp"
           test -s "$tmp/smoke.pub"
           # Executable parsing + signature lookup work on the binary itself.
           "$BIN" inspect "$BIN" --json > /dev/null
@@ -88,17 +103,13 @@ jobs:
           name: ${{ matrix.asset }}
           path: out/${{ matrix.asset }}
 
-      - name: Attach binary to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: out/${{ matrix.asset }}
-          fail_on_unmatched_files: true
-
-  # Checksums + Sigstore signature + SLSA provenance + SBOM, so users can verify
-  # exactly what they downloaded and that it was built by this workflow.
+  # Publish - all or nothing. Nothing is attached to the release until EVERY
+  # platform has built and passed its smoke test; then the binaries go up
+  # together with their checksums, Sigstore signature, SLSA provenance and SBOMs.
+  # A partial build therefore can never produce a "latest" release that is
+  # missing SHA256SUMS (which the installers, correctly, refuse to install from).
   checksums:
-    name: Checksums, signatures & SBOM
+    name: Publish (checksums, signatures, SBOM)
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
@@ -151,7 +162,9 @@ jobs:
       - name: Attach checksums, signatures, SBOM + notes to release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          fail_on_unmatched_files: true
           files: |
+            dist/warden-*
             dist/SHA256SUMS
             dist/SHA256SUMS.sig
             dist/SHA256SUMS.pem

@@ -66,6 +66,11 @@ _KEY_NAME = "quarantine_key"
 MAX_RESCAN_BYTES = 256 * 1024 * 1024
 MAX_IMPORT_BYTES = 8 * 1024 * 1024 * 1024
 
+# Warden uses only modern primitives (Ed25519, AES-GCM, HKDF, scrypt). Telling
+# the library not to load OpenSSL's "legacy" provider keeps it from failing at
+# import on machines where that optional module isn't present.
+os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
+
 try:
     from cryptography.exceptions import InvalidTag
     from cryptography.hazmat.primitives import hashes
@@ -73,8 +78,12 @@ try:
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     _CRYPTO = True
-except Exception:  # pragma: no cover - cryptography is a declared dependency
+    _CRYPTO_ERROR = ""
+except Exception as _exc:  # pragma: no cover - cryptography is a declared dependency
     _CRYPTO = False
+    # Keep the reason: "is it missing, or did it fail to load?" is the first
+    # question when this is hit inside a packaged build.
+    _CRYPTO_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 
 @dataclass(slots=True)
@@ -685,7 +694,8 @@ def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | N
 # cannot be reordered, dropped, duplicated or truncated without detection.
 def _need_crypto() -> None:
     if not _CRYPTO:
-        raise QuarantineError("the 'cryptography' package is required for quarantine encryption")
+        raise QuarantineError("the 'cryptography' package is required for quarantine encryption"
+                              + (f" (it failed to load: {_CRYPTO_ERROR})" if _CRYPTO_ERROR else ""))
 
 
 def _master_key(*, create: bool) -> bytes:

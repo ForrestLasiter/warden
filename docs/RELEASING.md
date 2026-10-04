@@ -41,8 +41,8 @@ enforced for real. The rulesets live under *Settings → Rules → Rulesets*.
 
 ```bash
 git switch main && git pull
-git tag -a v0.5.0 -m "Warden 0.5.0"
-git push origin v0.5.0
+git tag -a v0.5.1 -m "Warden 0.5.1"
+git push origin v0.5.1
 ```
 
 Release tags (`v*`) are protected by a repository ruleset: they cannot be moved
@@ -60,6 +60,16 @@ re-tagging.
 | `warden-macos-x64` | `macos-15-intel` |
 | `SHA256SUMS`, `SHA256SUMS.sig`, `SHA256SUMS.pem` | checksums + Sigstore keyless signature |
 | `warden.spdx.json`, `warden.cdx.json` | SBOMs |
+
+**Publishing is all-or-nothing.** Build jobs only upload workflow artifacts. A
+single final job attaches the binaries, checksums, signature and SBOMs to the
+release, and it runs only if *every* platform built and passed its smoke test.
+If one platform fails, nothing is published - fix it and tag the next patch
+version. (v0.5.0 predates this and was left half-published; see the changelog.)
+
+To rehearse a release without publishing, run the workflow by hand on a branch:
+`gh workflow run release.yml --ref <branch>` builds and smoke-tests all five
+binaries and skips the publish job.
 
 Each build installs dependencies with `pip install --require-hashes`, runs
 PyInstaller, and **smoke-tests the binary** (version, engine status, offline
@@ -87,6 +97,14 @@ is attested for every binary. All third-party Actions are pinned to commit SHAs.
   Gatekeeper blocks the first launch (right-click → Open, or
   `xattr -d com.apple.quarantine warden`). The README says so; integrity is
   provided by the checksum, the Sigstore signature and provenance instead.
+- **Intel macOS is built differently.** `cryptography` no longer publishes an
+  Intel-macOS wheel, so on that runner pip compiles it from the hash-locked
+  source distribution and links it **statically** against the runner's Homebrew
+  OpenSSL (the build log prints the version). That one component is therefore
+  not as tightly pinned as the rest: the OpenSSL version and the Rust build
+  tooling come from the runner image. Do not "fix" this by pinning an older
+  `cryptography` for Intel - 48.x, the last with Intel wheels, has known
+  vulnerabilities. If upstream support erodes further, drop the Intel binary.
 - **Windows on ARM** uses the x64 build under emulation (`yara-x` publishes no
   Windows ARM64 wheel). The installer says so when it detects ARM64.
 - **Other platforms** (32-bit, musl/Alpine, BSD): run from source —
