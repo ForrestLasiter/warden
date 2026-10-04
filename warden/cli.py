@@ -393,10 +393,18 @@ def quarantine_list():
     table.add_column("When")
     table.add_column("Original path")
     table.add_column("Status")
+    table.add_column("Last re-scan")
     for e in entries:
         status_txt = "[yellow]restored[/]" if e.restored else "[red]isolated[/]"
+        tags = [t for t, on in (("encrypted", e.encrypted), ("imported", e.imported)) if on]
+        if tags:
+            status_txt += f" [dim]({', '.join(tags)})[/]"
+        rescan = "-"
+        if isinstance(e.last_rescan, dict):
+            rescan = (f"{'still flagged' if e.last_rescan.get('threat') else 'no longer flagged'} "
+                      f"({str(e.last_rescan.get('when', ''))[:10]})")
         table.add_row(_esc(e.id), _esc(e.verdict), _esc(e.quarantined_at.split("T")[0]),
-                      _esc(e.original_path), status_txt)
+                      _esc(e.original_path), status_txt, _esc(rescan))
     console.print(table)
 
 
@@ -404,15 +412,167 @@ def quarantine_list():
 def quarantine_restore(
     entry_id: str = typer.Argument(..., help="Quarantine entry ID (from 'quarantine list')."),
     dest: str | None = typer.Option(None, "--to", help="Restore to this path instead of the original."),
+    rescan: bool = typer.Option(False, "--rescan", help="Re-scan with current rules first; ask before restoring if it is still flagged."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="With --rescan: restore even if still flagged, without asking."),
 ):
-    """Restore a quarantined file."""
+    """Restore a quarantined file (optionally re-scanning it first)."""
     q = Quarantine()
     try:
+        if rescan:
+            result = q.rescan(entry_id)
+            _print_rescan(entry_id, result)
+            if result.is_threat and not yes:
+                if not typer.confirm("It is STILL detected as a threat. Restore it anyway?", default=False):
+                    console.print("[dim]Left in quarantine.[/]")
+                    raise typer.Exit(1)
+            elif result.errored and not result.is_threat and not yes:
+                if not typer.confirm("An engine could not finish re-scanning it. Restore anyway?", default=False):
+                    console.print("[dim]Left in quarantine.[/]")
+                    raise typer.Exit(1)
         out = q.restore(entry_id, Path(dest) if dest else None)
     except QuarantineError as exc:
-        console.print(f"[red]{exc}[/]")
+        console.print(f"[red]{_esc(exc)}[/]")
         raise typer.Exit(2)
-    console.print(f"[green]Restored[/] to {out}")
+    console.print(f"[green]Restored[/] to {_esc(out)}")
+
+
+def _print_rescan(entry_id: str, result: FileResult) -> None:
+    if result.is_threat:
+        console.print(f"[red]{_esc(entry_id)}: still detected[/] ({result.verdict.label})")
+    elif result.errored:
+        console.print(f"[yellow]{_esc(entry_id)}: re-scan incomplete[/] (an engine could not finish)")
+    else:
+        console.print(f"[green]{_esc(entry_id)}: no longer detected[/] by the current rules")
+    for f in result.findings:
+        if f.severity >= Severity.LOW:
+            console.print(f"    [{_style(f.severity)}]-[/] ({_esc(f.engine)}) [bold]{_esc(f.name)}[/]: "
+                          f"{_esc(f.description)}")
+
+
+@quarantine_app.command("rescan")
+def quarantine_rescan(
+    entry_id: str | None = typer.Argument(None, help="Quarantine entry ID (omit with --all)."),
+    all_items: bool = typer.Option(False, "--all", help="Re-scan every item still in quarantine."),
+):
+    """Re-check quarantined items against the current rules (they stay isolated).
+
+    Exit code 1 if anything is still detected, 2 if an item could not be re-scanned.
+    """
+    q = Quarantine()
+    if all_items:
+        ids = [e.id for e in q.list_entries() if not e.restored]
+    elif entry_id:
+        ids = [entry_id]
+    else:
+        console.print("[red]Give an entry ID, or --all.[/]")
+        raise typer.Exit(2)
+    if not ids:
+        console.print("[dim]Nothing in quarantine to re-scan.[/]")
+        return
+    from .scanner import Scanner
+    scanner = Scanner()
+    still, failed = 0, 0
+    for i in ids:
+        try:
+            result = q.rescan(i, scanner)
+        except QuarantineError as exc:
+            failed += 1
+            console.print(f"[red]{_esc(i)}: {_esc(exc)}[/]")
+            continue
+        still += int(result.is_threat)
+        failed += int(result.errored and not result.is_threat)
+        _print_rescan(i, result)
+    raise typer.Exit(2 if failed else (1 if still else 0))
+
+
+@quarantine_app.command("purge")
+def quarantine_purge(
+    older_than: str | None = typer.Option(None, "--older-than", help="Only items quarantined longer ago than this (e.g. 30d, 12h, 2w)."),
+    expired: bool = typer.Option(False, "--expired", help="Use the 'quarantine_retention_days' setting as the age."),
+    restored: bool = typer.Option(False, "--restored", help="Only items that were already restored."),
+    all_items: bool = typer.Option(False, "--all", help="Every quarantined item."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted; delete nothing."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+):
+    """Permanently delete quarantined items by age or state (cannot be undone)."""
+    from .quarantine import parse_age
+    cfg = Config.load()
+    days: float | None = None
+    try:
+        if older_than:
+            days = parse_age(older_than)
+    except ValueError as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(2)
+    if expired:
+        if cfg.quarantine_retention_days <= 0:
+            console.print("[red]No retention period is set.[/] Set one with: "
+                          "warden config set quarantine_retention_days 30")
+            raise typer.Exit(2)
+        days = float(cfg.quarantine_retention_days) if days is None else min(days, cfg.quarantine_retention_days)
+    if days is None and not restored and not all_items:
+        console.print("[red]Choose what to purge:[/] --older-than, --expired, --restored or --all.")
+        raise typer.Exit(2)
+
+    q = Quarantine(cfg)
+    selected = q.purge(older_than_days=days, restored_only=restored, everything=all_items, dry_run=True)
+    if not selected:
+        console.print("[dim]Nothing matches; nothing deleted.[/]")
+        return
+    for e in selected:
+        console.print(f"  {_esc(e.id)}  {_esc(e.quarantined_at[:10])}  {_esc(e.original_path)}")
+    if dry_run:
+        console.print(f"[dim]{len(selected)} item(s) would be permanently deleted (dry run).[/]")
+        return
+    if not yes and not typer.confirm(
+            f"Permanently delete these {len(selected)} quarantined item(s)? This cannot be undone.",
+            default=False):
+        console.print("[dim]Cancelled.[/]")
+        return
+    deleted = q.purge(older_than_days=days, restored_only=restored, everything=all_items)
+    console.print(f"[green]Deleted[/] {len(deleted)} quarantined item(s).")
+
+
+def _bundle_password(flag: bool) -> str | None:
+    """Passwords are prompted for (hidden) or read from WARDEN_BUNDLE_PASSWORD -
+    never taken from the command line, where they would land in shell history."""
+    import os
+    if not flag:
+        return None
+    return os.environ.get("WARDEN_BUNDLE_PASSWORD") or typer.prompt("Bundle password", hide_input=True)
+
+
+@quarantine_app.command("export")
+def quarantine_export(
+    entry_id: str = typer.Argument(..., help="Quarantine entry ID."),
+    out: str = typer.Argument(..., help="Bundle file to write (e.g. sample.wq)."),
+    password: bool = typer.Option(False, "--password", "-p", help="Encrypt the bundle with a password (prompted)."),
+):
+    """Export a quarantined item as a portable bundle (the payload stays neutralized)."""
+    try:
+        path = Quarantine().export(entry_id, Path(out), password=_bundle_password(password))
+    except QuarantineError as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(2)
+    console.print(f"[green]Exported[/] {_esc(entry_id)} to {_esc(path)}"
+                  + (" [dim](password-protected)[/]" if password else ""))
+    console.print("[yellow]This bundle contains a file Warden flagged.[/] Share it only with "
+                  "someone who expects it.")
+
+
+@quarantine_app.command("import")
+def quarantine_import(
+    bundle: str = typer.Argument(..., help="Bundle file created by 'warden quarantine export'."),
+    password: bool = typer.Option(False, "--password", "-p", help="The bundle is password-protected (prompted)."),
+):
+    """Add an exported bundle to this computer's quarantine."""
+    try:
+        entry = Quarantine().import_bundle(Path(bundle), password=_bundle_password(password))
+    except QuarantineError as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(2)
+    console.print(f"[green]Imported[/] as {entry.id} ({_esc(entry.verdict)}, {entry.size:,} bytes).")
+    console.print(f"[dim]Re-check it with: warden quarantine rescan {entry.id}[/]")
 
 
 @quarantine_app.command("delete")
@@ -427,9 +587,9 @@ def quarantine_delete(
     try:
         q.delete(entry_id)
     except QuarantineError as exc:
-        console.print(f"[red]{exc}[/]")
+        console.print(f"[red]{_esc(exc)}[/]")
         raise typer.Exit(2)
-    console.print(f"[green]Deleted[/] {entry_id}")
+    console.print(f"[green]Deleted[/] {_esc(entry_id)}")
 
 
 @app.command()
@@ -1016,6 +1176,8 @@ _CONFIG_FIELDS = {
     "follow_symlinks": (bool, "Follow symlinks when walking folders."),
     "scan_archives": (bool, "Look inside zip/tar/gzip archives (bounded)."),
     "check_signatures": (bool, "Ask the OS for the publisher signature of flagged executables."),
+    "quarantine_encryption": (bool, "Seal newly quarantined files with AES-256-GCM (key in the OS secret store)."),
+    "quarantine_retention_days": (int, "Age in days used by 'quarantine purge --expired' (0 = keep until deleted)."),
     "max_scan_bytes": (int, "Max file size (bytes) for deep content scanning."),
 }
 # The VirusTotal key is managed separately via `set-vt-key` (OS secret store).

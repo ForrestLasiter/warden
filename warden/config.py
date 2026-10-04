@@ -62,6 +62,8 @@ class Config:
     offline: bool = False             # hard switch: never touch the network
     virustotal_api_key: str = ""      # optional; enables the richer VT provider
     scan_archives: bool = True        # look inside zip/tar/gzip/... (bounded)
+    quarantine_encryption: bool = False   # seal quarantined files with AES-256-GCM
+    quarantine_retention_days: int = 0    # 0 = keep until deleted; used by `purge --expired`
     check_signatures: bool = True     # ask the OS for publisher signatures on flagged files
     skip_extensions: set[str] = field(default_factory=lambda: set(SKIP_EXTENSIONS))
 
@@ -116,6 +118,10 @@ class Config:
         cfg.online_hash_lookup = _as_bool(raw.get("online_hash_lookup"), cfg.online_hash_lookup)
         cfg.offline = _as_bool(raw.get("offline"), cfg.offline)
         cfg.scan_archives = _as_bool(raw.get("scan_archives"), cfg.scan_archives)
+        cfg.quarantine_encryption = _as_bool(
+            raw.get("quarantine_encryption"), cfg.quarantine_encryption)
+        cfg.quarantine_retention_days = _clamp_int(
+            raw.get("quarantine_retention_days"), cfg.quarantine_retention_days, 0, 36500)
         cfg.check_signatures = _as_bool(raw.get("check_signatures"), cfg.check_signatures)
         cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key) or "")
         exts = raw.get("skip_extensions")
@@ -132,6 +138,8 @@ class Config:
             "online_hash_lookup": self.online_hash_lookup,
             "offline": self.offline,
             "scan_archives": self.scan_archives,
+            "quarantine_encryption": self.quarantine_encryption,
+            "quarantine_retention_days": self.quarantine_retention_days,
             "check_signatures": self.check_signatures,
             "skip_extensions": sorted(self.skip_extensions),
         }
