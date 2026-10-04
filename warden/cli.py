@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json as _json
-import os
 import sys
 from pathlib import Path
 
@@ -837,7 +836,7 @@ def config_path():
 def _launched_by_double_click() -> bool:
     """True when the Windows console was created just for us (Explorer launch),
     rather than inherited from a terminal the user is typing in."""
-    if os.name != "nt":
+    if sys.platform != "win32":
         return False
     try:
         import ctypes

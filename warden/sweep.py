@@ -6,6 +6,10 @@ the spots that matter for persistence and execution, then scans them:
   * Autoruns      - registry Run/RunOnce keys (HKCU + HKLM) and Startup folders
   * Processes     - the on-disk image of every running process
   * Scheduled     - executables referenced by Scheduled Tasks (Windows)
+  * Persistence   - Linux: systemd units, cron, XDG autostart, shell start-up
+                    files, init scripts, ld.so.preload. macOS: LaunchAgents /
+                    LaunchDaemons, login items, cron, periodic scripts.
+                    (see warden.persistence)
   * Temp          - %TEMP% and the Windows temp dir
   * Downloads     - the user's Downloads folder
 
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +35,7 @@ try:
 except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
+from . import persistence as _persistence
 from . import signature as _signature
 from .config import Config
 from .models import FileResult, Finding, ScanReport, Severity
@@ -58,6 +64,7 @@ class SystemSweep:
     def __init__(self, config: Config | None = None, scanner: Scanner | None = None):
         self.config = config or Config.load()
         self.scanner = scanner or Scanner(self.config)
+        self._persistence_scan: _persistence.PersistenceScan | None = None
 
     # -- collection -------------------------------------------------------
     def collect(self, *, quick: bool = False) -> list[SweepCategory]:
@@ -66,6 +73,8 @@ class SystemSweep:
         cats.append(self._processes())
         if IS_WINDOWS:
             cats.append(self._scheduled_tasks())
+        else:
+            cats.append(self._persistence(quick=quick))
         cats.append(self._temp(quick=quick))
         cats.append(self._downloads(quick=quick))
         # Drop empties for a tidy report.
@@ -140,6 +149,14 @@ class SystemSweep:
                 cat.paths.append(exe)
         return cat
 
+    def _persistence(self, *, quick: bool) -> SweepCategory:
+        cat = SweepCategory(
+            "persistence",
+            "Start-up persistence (systemd, cron, launchd, login items, shell profiles)")
+        self._persistence_scan = _persistence.collect(full=not quick)
+        cat.paths = [p for p in self._persistence_scan.files() if p.is_file()]
+        return cat
+
     def _temp(self, *, quick: bool) -> SweepCategory:
         cat = SweepCategory("temp", "Temp directories")
         dirs = []
@@ -187,7 +204,43 @@ class SystemSweep:
             category = cat_of.get(result_key, "other")
             # stash category in the worst finding's meta, or as a note
             self._augment_location(result, category)
+        self._apply_persistence(report)
         return report, categories
+
+    def _apply_persistence(self, report: ScanReport) -> None:
+        """Judge each persistence registration on what it launches, and attach
+        the verdict to the file that defines it."""
+        scan = self._persistence_scan
+        if scan is None:
+            return
+        # Locations we could not read (often root-only) are a coverage gap.
+        report.unreadable.extend(scan.unreadable)
+        by_path = {str(Path(r.path)): r for r in report.results}
+        texts: dict[str, str | None] = {}
+        for item in scan.items:
+            src = item.source_path
+            if src is None:
+                # No file behind it (the user crontab): scan the text in memory.
+                result = by_path.get(item.source)
+                if result is None:
+                    result = self.scanner.scan_bytes(item.source, item.text.encode("utf-8", "replace"))
+                    by_path[item.source] = result
+                    report.results.append(result)
+                    report.files_scanned += 1
+                text: str | None = item.text
+            else:
+                result = by_path.get(str(src))
+                if result is None:
+                    continue
+                if str(src) not in texts:
+                    texts[str(src)] = _read_text(src)
+                text = texts[str(src)]
+            known = {(f.name, f.meta.get("command"), f.meta.get("path")) for f in result.findings}
+            for finding in _persistence.assess(item, text):
+                key = (finding.name, finding.meta.get("command"), finding.meta.get("path"))
+                if key not in known:
+                    known.add(key)
+                    result.findings.append(finding)
 
     def _augment_location(self, result: FileResult, category: str) -> None:
         path = Path(result.path)
@@ -210,6 +263,14 @@ class SystemSweep:
 
 
 # -- helpers -------------------------------------------------------------
+def _read_text(path: Path, limit: int = 256 * 1024) -> str | None:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(limit).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _collect_files(dirs: list[Path], *, quick: bool, exe_only: bool) -> list[Path]:
     out: list[Path] = []
     max_files = 500 if quick else 5000
@@ -236,7 +297,7 @@ def _collect_files(dirs: list[Path], *, quick: bool, exe_only: bool) -> list[Pat
 
 def _registry_autorun_executables() -> list[Path]:
     """Read Run/RunOnce values and extract the referenced executable paths."""
-    if not IS_WINDOWS:
+    if sys.platform != "win32":
         return []
     try:
         import winreg

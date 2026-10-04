@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -46,12 +47,12 @@ def _acquire(fd: int, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            if _IS_WINDOWS:
+            if sys.platform == "win32":
                 import msvcrt
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return
         except OSError:
             if time.monotonic() >= deadline:
@@ -61,13 +62,13 @@ def _acquire(fd: int, timeout: float) -> None:
 
 def _release(fd: int) -> None:
     try:
-        if _IS_WINDOWS:
+        if sys.platform == "win32":
             import msvcrt
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
-            fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
+            fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError:
         pass
 

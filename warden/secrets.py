@@ -19,6 +19,7 @@ import base64
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .models import default_data_dir
@@ -41,6 +42,8 @@ def _secrets_dir() -> Path:
 
 # -- Windows DPAPI -------------------------------------------------------
 def _dpapi(data: bytes, protect: bool) -> bytes:
+    if sys.platform != "win32":
+        raise OSError("DPAPI is only available on Windows")
     import ctypes
     from ctypes import wintypes
 
