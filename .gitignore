@@ -29,3 +29,6 @@ htmlcov/
 .hypothesis/
 .mypy_cache/
 .ruff_cache/
+
+# Local tooling
+.claude/

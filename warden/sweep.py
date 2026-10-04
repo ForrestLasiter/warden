@@ -39,7 +39,7 @@ from . import persistence as _persistence
 from . import signature as _signature
 from .config import Config
 from .models import FileResult, Finding, ScanReport, Severity
-from .scanner import Scanner
+from .scanner import ScanLimits, Scanner
 
 IS_WINDOWS = os.name == "nt"
 
@@ -183,6 +183,7 @@ class SystemSweep:
         *,
         quick: bool = False,
         progress: Callable[[FileResult], None] | None = None,
+        limits: ScanLimits | None = None,
     ) -> tuple[ScanReport, list[SweepCategory]]:
         categories = self.collect(quick=quick)
         # Flatten unique paths, remembering category membership for the report.
@@ -195,7 +196,7 @@ class SystemSweep:
                     cat_of[key] = cat.name
                     all_paths.append(p)
 
-        report = self.scanner.scan_files(all_paths, progress=progress)
+        report = self.scanner.scan_files(all_paths, progress=progress, limits=limits)
         report.root = "<system-sweep>"
 
         # Location heuristic + tag each result with its sweep category.

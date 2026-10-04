@@ -51,7 +51,7 @@ TARGET="$BIN_DIR/warden"
 
 # --- uninstall --------------------------------------------------------------
 if [ "$ACTION" = "uninstall" ]; then
-  rm -f "$TARGET" && echo "Removed $TARGET" || true
+  if rm -f "$TARGET"; then echo "Removed $TARGET"; fi
   rm -f "$HOME/.local/share/applications/warden.desktop" \
         "$HOME/Desktop/warden.desktop" "$HOME/Desktop/Warden.command" 2>/dev/null || true
   echo "Removed Warden launchers."
@@ -163,7 +163,9 @@ DESKTOP
     if [ -d "$HOME/Desktop" ]; then
       cp "$apps/warden.desktop" "$HOME/Desktop/warden.desktop"
       chmod +x "$HOME/Desktop/warden.desktop"
-      command -v gio >/dev/null 2>&1 && gio set "$HOME/Desktop/warden.desktop" metadata::trusted true 2>/dev/null || true
+      if command -v gio >/dev/null 2>&1; then
+        gio set "$HOME/Desktop/warden.desktop" metadata::trusted true 2>/dev/null || true
+      fi
     fi
     echo "Created a 'Warden' application entry (also on your Desktop)."
   elif [ "$OS" = "Darwin" ] && [ -d "$HOME/Desktop" ]; then

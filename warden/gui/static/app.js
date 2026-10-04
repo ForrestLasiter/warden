@@ -1,6 +1,8 @@
 "use strict";
 
-const TOKEN = window.WARDEN_TOKEN;
+/* The session token arrives in a <meta> tag (not an inline script) so the page
+   can run under a strict Content-Security-Policy with no inline code. */
+const TOKEN = (document.querySelector('meta[name="warden-token"]') || {}).content || "";
 const SEV = ["Clean", "Info", "Low", "Medium", "High", "Critical"];
 const SEV_CLASS = ["clean", "info", "low", "medium", "high", "critical"];
 const TITLES = { overview: "Overview", scan: "Scan", sweep: "System sweep", history: "History", quarantine: "Quarantine" };
@@ -21,7 +23,7 @@ const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (k === "class") n.className = v;
-    else if (k === "html") n.innerHTML = v;
+    else if (k === "html") n.innerHTML = v;      // only ever a constant from ICON
     else if (k === "text") n.textContent = v;
     else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
     else if (v !== null && v !== undefined) n.setAttribute(k, v);
@@ -30,10 +32,13 @@ const el = (tag, attrs = {}, ...kids) => {
   return n;
 };
 
+class ApiError extends Error {
+  constructor(message, status, data) { super(message); this.status = status; this.data = data || {}; }
+}
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { "X-Warden-Token": TOKEN, "Content-Type": "application/json", ...(opts.headers || {}) } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(data.error || `HTTP ${res.status}`, res.status, data);
   return data;
 }
 
@@ -41,9 +46,10 @@ let toastTimer = null;
 function toast(msg, kind = "") {
   const t = $("#toast");
   t.textContent = msg; t.className = "toast" + (kind ? " " + kind : ""); t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 4000);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
 }
 const badge = (i) => el("span", { class: "badge badge-" + SEV_CLASS[i] }, SEV[i]);
+const pill = (cls, text) => el("span", { class: "badge badge-" + cls }, text);
 const fmtTime = (s) => (s || "").replace("T", " ").slice(0, 16);
 
 /* ---------- theme ---------- */
@@ -91,18 +97,39 @@ async function loadStatus() {
   try {
     statusCache = await api("/api/status");
     const active = statusCache.active.length ? statusCache.active.join(", ") : "none";
-    $("#engineStatus").innerHTML = `<span class="dot"></span>Engines active: ${active}`;
+    const line = $("#engineStatus");
+    line.textContent = "";
+    line.append(el("span", { class: "dot", "aria-hidden": "true" }), `Engines active: ${active}`);
     if (statusCache.version) $("#footerVersion").textContent = `Warden v${statusCache.version}`;
+    if (statusCache.address) $("#localAddress").textContent = statusCache.address;
+    renderNotices(statusCache);
+    // Offline mode is a hard switch on the server: reflect it instead of
+    // offering a checkbox that can't do anything.
+    $$("#scanOnline, #sweepOnline").forEach((box) => {
+      box.disabled = Boolean(statusCache.offline);
+      if (statusCache.offline) box.checked = false;
+    });
+    $$(".offline-note").forEach((n) => { n.hidden = !statusCache.offline; });
   } catch (e) { $("#engineStatus").textContent = "Could not load engine status"; }
   return statusCache;
 }
 
+function renderNotices(status) {
+  const box = $("#notices");
+  box.textContent = "";
+  (status.warnings || []).forEach((w) => box.append(
+    el("p", { class: "notice notice-warn" }, el("strong", { text: "Reduced coverage: " }), w)));
+  (status.advisories || []).forEach((a) => box.append(
+    el("p", { class: "notice" }, el("strong", { text: "Note: " }), a)));
+  box.hidden = !box.childElementCount;
+}
+
 function statCard(icon, num, sub, label, tone) {
+  const number = el("div", { class: "stat-num" }, String(num));
+  if (sub) number.append(" ", el("small", { text: sub }));
   return el("div", { class: "stat" },
     el("div", { class: "stat-ico " + (tone || ""), html: ICON[icon] }),
-    el("div", {},
-      el("div", { class: "stat-num", html: num + (sub ? ` <small>${sub}</small>` : "") }),
-      el("div", { class: "stat-label", text: label })));
+    el("div", {}, number, el("div", { class: "stat-label", text: label })));
 }
 
 async function loadOverview() {
@@ -117,23 +144,24 @@ async function loadOverview() {
     const last = entries[0];
     const quarActive = (quar.entries || []).filter((e) => !e.restored).length;
     const activeCount = status ? status.active.length : 0;
+    const engineTotal = status ? Object.keys(status.engines || {}).length : 0;
     const hasHistory = entries.length > 0;
 
     // Empty state vs populated overview
     $("#overviewEmpty").hidden = hasHistory;
     $("#overviewMain").hidden = !hasHistory;
 
-    box.innerHTML = "";
+    box.textContent = "";
     box.append(
-      statCard("engines", String(activeCount), "/ 4", "Detection engines active"),
-      statCard("scan", String(entries.length), "", "Scans in history"),
-      statCard("threat", last ? String(last.threats) : "0", "", "Threats — most recent scan", last && last.threats ? "danger" : "success"),
-      statCard("quarantine", String(quarActive), "", "Files in quarantine", quarActive ? "warn" : ""),
+      statCard("engines", activeCount, engineTotal ? `/ ${engineTotal}` : "", "Detection engines active"),
+      statCard("scan", entries.length, "", "Scans in history"),
+      statCard("threat", last ? last.threats : 0, "", "Threats — most recent scan", last && last.threats ? "danger" : "success"),
+      statCard("quarantine", quarActive, "", "Files in quarantine", quarActive ? "warn" : ""),
     );
 
-    recent.innerHTML = "";
+    recent.textContent = "";
     if (!entries.length) {
-      recent.append(el("p", { class: "empty", html: ICON.empty + "No scans yet. Run one to see it here." }));
+      recent.append(el("p", { class: "empty", html: ICON.empty }, "No scans yet. Run one to see it here."));
     } else {
       entries.slice(0, 6).forEach((e) => {
         recent.append(el("div", { class: "recent-item" },
@@ -145,20 +173,79 @@ async function loadOverview() {
       });
     }
   } catch (e) {
-    box.innerHTML = ""; box.append(el("p", { class: "empty", text: "Could not load overview." }));
+    box.textContent = ""; box.append(el("p", { class: "empty", text: "Could not load overview." }));
   }
 }
 
 /* ---------- report rendering ---------- */
+/* Three outcomes, never two: a scan that could not cover everything is
+   "incomplete", not "clean" - and it says why. */
+function reportState(report) {
+  if (report.threats > 0) return "threats";
+  const cov = report.coverage || {};
+  if (cov.complete === false) return "incomplete";
+  return "clean";
+}
+
+function coverageNotes(report) {
+  const cov = report.coverage || {};
+  const notes = [];
+  if (report.stopped) notes.push(`Stopped early: ${report.stopped}.`);
+  if (cov.unreadable_paths) notes.push(`${cov.unreadable_paths} path(s) could not be read.`);
+  if (cov.read_or_stat_errors) notes.push(`${cov.read_or_stat_errors} file(s) could not be opened.`);
+  if (cov.engine_errors) notes.push(`${cov.engine_errors} file(s) hit an engine error (verdict unknown).`);
+  (cov.inactive_or_failed_engines || []).forEach((w) => notes.push(`Engine unavailable: ${w}`));
+  if (cov.archive_members_skipped) notes.push(`${cov.archive_members_skipped} archive member(s) were not inspected (encrypted or over a safety limit).`);
+  if (report.results_truncated) notes.push("Only the most severe results are listed; the full report is in History.");
+  (report.advisories || []).forEach((a) => notes.push(a));
+  return notes;
+}
+
 function renderSummary(report) {
-  const t = report.threats > 0;
-  return el("div", { class: "summary-card " + (t ? "threats" : "clean") },
-    el("div", { class: "sc-head" }, badge(t ? 5 : 0), el("span", { text: t ? `${report.threats} threat(s) found` : "No threats found" })),
+  const state = reportState(report);
+  const head = state === "threats" ? [badge(5), `${report.threats} threat(s) found`]
+    : state === "incomplete" ? [pill("medium", "Incomplete"), "Scan incomplete — not everything could be checked"]
+    : [badge(0), "No threats found"];
+  const cov = report.coverage || {};
+  const card = el("div", { class: "summary-card " + state },
+    el("div", { class: "sc-head" }, head[0], el("span", { text: head[1] })),
     el("div", { class: "summary-grid" },
       el("span", {}, el("strong", { text: String(report.files_scanned) }), " scanned"),
       el("span", {}, el("strong", { text: String(report.files_skipped) }), " skipped"),
+      cov.archives_opened ? el("span", {}, el("strong", { text: String(cov.archive_members_scanned) }), " inside archives") : null,
       el("span", {}, el("strong", { text: String(report.errors) }), " errors"),
       el("span", {}, el("strong", { text: (report.duration_seconds || 0).toFixed(1) + "s" }), " elapsed")));
+  const notes = coverageNotes(report);
+  if (!notes.length) return card;
+  const list = el("ul", { class: "coverage-notes" });
+  notes.forEach((n) => list.append(el("li", { text: n })));
+  return el("div", { class: "summary-wrap" }, card, list);
+}
+
+const SIG_TEXT = {
+  valid: "valid signature", unsigned: "not signed",
+  invalid: "INVALID signature (file altered or signature broken)",
+  untrusted: "signed, but the certificate is not trusted",
+  adhoc: "ad-hoc signed (no publisher identity)",
+  unsupported: "no platform signature scheme", unknown: "signature status could not be determined",
+};
+function contextLines(r) {
+  const meta = r.meta || {};
+  const lines = [];
+  if (meta.binary) {
+    const b = meta.binary;
+    lines.push(["File type", [String(b.format || "?").toUpperCase(), b.arch || "", b.type || ""].join(" ").trim()]);
+  }
+  if (meta.signature) {
+    const s = meta.signature;
+    lines.push(["Signature", (SIG_TEXT[s.status] || s.status || "unknown") + (s.publisher ? ` — ${s.publisher}` : "")]);
+  }
+  if (meta.archive) {
+    const a = meta.archive;
+    lines.push(["Archive", `${a.members_scanned} member(s) inspected` + (a.members_skipped ? `, ${a.members_skipped} not inspected` : "")]);
+  }
+  if (r.sha256) lines.push(["SHA-256", r.sha256]);
+  return lines;
 }
 
 function renderResultItem(r, jobId, index) {
@@ -177,10 +264,16 @@ function renderResultItem(r, jobId, index) {
         el("span", { class: "finding-engine", text: `· ${f.engine}` })),
       el("div", { text: f.description })));
   }
+  const ctx = contextLines(r);
+  if (ctx.length) {
+    const dl = el("dl", { class: "context" });
+    ctx.forEach(([k, v]) => dl.append(el("dt", { text: k }), el("dd", { text: v })));
+    box.append(el("div", { class: "finding" }, dl));
+  }
   if (r.verdict >= 3 && jobId != null && index != null) {
     box.append(el("div", { class: "finding" },
       el("button", { class: "btn btn-danger btn-small", type: "button",
-        onclick: (e) => { e.stopPropagation(); quarantineResult(jobId, index); } }, "Quarantine this file")));
+        onclick: (e) => { e.stopPropagation(); quarantineResult(jobId, index, e.currentTarget); } }, "Quarantine this file")));
   }
   item.append(head, box);
   return item;
@@ -190,7 +283,7 @@ const SEV_INDEX = { info: 1, low: 2, medium: 3, high: 4, critical: 5 };
 
 function renderResults(container, report, jobId, minVerdict) {
   const threshold = minVerdict || 3;   // default: medium and up
-  container.innerHTML = "";
+  container.textContent = "";
   container.append(renderSummary(report));
   // Keep each result's original index so the server can look it up by handle.
   const flagged = report.results
@@ -198,24 +291,42 @@ function renderResults(container, report, jobId, minVerdict) {
     .filter((x) => x.r.verdict >= threshold)
     .sort((a, b) => b.r.verdict - a.r.verdict);
   if (!flagged.length) return;
-  container.append(el("h2", { text: "Flagged files", style: "font-size:1.05rem;margin:6px 2px 0" }));
+  container.append(el("h2", { class: "results-heading", text: "Flagged files" }));
   flagged.forEach((x) => container.append(renderResultItem(x.r, jobId, x.i)));
+}
+
+function announce(report, noun) {
+  const state = reportState(report);
+  if (state === "threats") toast(`${report.threats} threat(s) found`, "error");
+  else if (state === "incomplete") toast(`${noun} incomplete — see the notes for what was not checked`, "error");
+  else toast(`${noun} complete — clean`, "success");
 }
 
 /* ---------- jobs ---------- */
 function progressBlock(wrap, label) {
-  wrap.hidden = false; wrap.innerHTML = "";
+  wrap.hidden = false; wrap.textContent = "";
+  const cancel = el("button", { class: "btn btn-small", type: "button", disabled: "" }, "Cancel");
   wrap.append(el("div", { class: "progress-line", role: "status", "aria-live": "polite" },
-    el("div", { class: "spinner", "aria-hidden": "true" }), el("span", { class: "progress-text", text: label })));
-  return $(".progress-text", wrap);
+    el("div", { class: "spinner", "aria-hidden": "true" }),
+    el("span", { class: "progress-text", text: label })), cancel);
+  return { text: $(".progress-text", wrap), cancel };
+}
+function armCancel(button, jobId, text) {
+  button.disabled = false;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    text.textContent = "Stopping after the current file…";
+    try { await api(`/api/job/${jobId}/cancel`, { method: "POST" }); }
+    catch (_) { /* already finished - the next poll will show the result */ }
+  });
 }
 async function pollJob(jobId, onProgress) {
   return new Promise((resolve, reject) => {
     const tick = async () => {
       try {
         const j = await api("/api/job/" + jobId);
-        onProgress(j);
-        if (j.status === "done") return resolve(j);
+        if (j.status === "running") onProgress(j);
+        if (j.status === "done" || j.status === "cancelled") return resolve(j);
         if (j.status === "error") return reject(new Error(j.error || "job failed"));
         setTimeout(tick, 400);
       } catch (e) { reject(e); }
@@ -224,56 +335,72 @@ async function pollJob(jobId, onProgress) {
   });
 }
 
-$("#scanForm").addEventListener("submit", async (e) => {
+async function runJob({ button, progress, startLabel, endpoint, payload, onDone, noun }) {
+  button.disabled = true;
+  const ui = progressBlock(progress, startLabel);
+  let stopping = false;
+  ui.cancel.addEventListener("click", () => { stopping = true; });
+  try {
+    const { job } = await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
+    armCancel(ui.cancel, job, ui.text);
+    const done = await pollJob(job, (j) => {
+      if (!stopping) ui.text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`;
+    });
+    progress.hidden = true;
+    onDone(done, job);
+    statusCache = null;
+    announce(done.report, noun);
+  } catch (err) { progress.hidden = true; toast(`${noun} failed: ${err.message}`, "error"); }
+  finally { button.disabled = false; }
+}
+
+$("#scanForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const path = $("#scanPath").value.trim(); if (!path) return;
-  const btn = $("#scanBtn"); btn.disabled = true;
-  const text = progressBlock($("#scanProgress"), "Starting scan…");
-  $("#scanResults").innerHTML = "";
-  try {
-    const { job } = await api("/api/scan", { method: "POST", body: JSON.stringify({ path, min_severity: $("#scanSeverity").value, save: true, online: $("#scanOnline").checked }) });
-    const done = await pollJob(job, (j) => { text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`; });
-    $("#scanProgress").hidden = true;
-    renderResults($("#scanResults"), done.report, job, SEV_INDEX[$("#scanSeverity").value] || 3);
-    statusCache = null;
-    toast(done.report.threats ? `${done.report.threats} threat(s) found` : "Scan complete — clean", done.report.threats ? "error" : "success");
-  } catch (err) { $("#scanProgress").hidden = true; toast("Scan failed: " + err.message, "error"); }
-  finally { btn.disabled = false; }
+  $("#scanResults").textContent = "";
+  const level = $("#scanSeverity").value;
+  runJob({
+    button: $("#scanBtn"), progress: $("#scanProgress"), startLabel: "Starting scan…", noun: "Scan",
+    endpoint: "/api/scan",
+    payload: { path, min_severity: level, save: true, online: $("#scanOnline").checked },
+    onDone: (done, job) => renderResults($("#scanResults"), done.report, job, SEV_INDEX[level] || 3),
+  });
 });
 
-$("#sweepForm").addEventListener("submit", async (e) => {
+$("#sweepForm").addEventListener("submit", (e) => {
   e.preventDefault();
-  const btn = $("#sweepBtn"); btn.disabled = true;
-  const text = progressBlock($("#sweepProgress"), "Gathering targets…");
-  $("#sweepResults").innerHTML = ""; $("#sweepCategories").innerHTML = "";
-  try {
-    const { job } = await api("/api/sweep", { method: "POST", body: JSON.stringify({ quick: $("#sweepQuick").checked, save: true, online: $("#sweepOnline").checked }) });
-    const done = await pollJob(job, (j) => { text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`; });
-    $("#sweepProgress").hidden = true;
-    if (done.categories) {
-      const box = $("#sweepCategories");
-      done.categories.forEach((c) => box.append(el("div", { class: "stat", title: c.description },
-        el("div", { class: "stat-ico", html: ICON.scan }),
-        el("div", {}, el("div", { class: "stat-num", text: String(c.files) }), el("div", { class: "stat-label", text: c.name })))));
-    }
-    renderResults($("#sweepResults"), done.report, job);
-    statusCache = null;
-    toast(done.report.threats ? `${done.report.threats} threat(s) found` : "Sweep complete — clean", done.report.threats ? "error" : "success");
-  } catch (err) { $("#sweepProgress").hidden = true; toast("Sweep failed: " + err.message, "error"); }
-  finally { btn.disabled = false; }
+  $("#sweepResults").textContent = ""; $("#sweepCategories").textContent = "";
+  runJob({
+    button: $("#sweepBtn"), progress: $("#sweepProgress"), startLabel: "Gathering targets…", noun: "Sweep",
+    endpoint: "/api/sweep",
+    payload: { quick: $("#sweepQuick").checked, save: true, online: $("#sweepOnline").checked },
+    onDone: (done, job) => {
+      if (done.categories) {
+        const box = $("#sweepCategories");
+        done.categories.forEach((c) => box.append(el("div", { class: "stat", title: c.description },
+          el("div", { class: "stat-ico", html: ICON.scan }),
+          el("div", {}, el("div", { class: "stat-num", text: String(c.files) }), el("div", { class: "stat-label", text: c.name })))));
+      }
+      renderResults($("#sweepResults"), done.report, job);
+    },
+  });
 });
 
-async function quarantineResult(jobId, index) {
-  try { await api("/api/quarantine/add", { method: "POST", body: JSON.stringify({ job: jobId, index }) }); toast("File quarantined and isolated", "success"); }
-  catch (err) { toast("Quarantine failed: " + err.message, "error"); }
+async function quarantineResult(jobId, index, button) {
+  try {
+    await api("/api/quarantine/add", { method: "POST", body: JSON.stringify({ job: jobId, index }) });
+    if (button) { button.disabled = true; button.textContent = "Quarantined"; }
+    toast("File quarantined and isolated", "success");
+  } catch (err) { toast("Quarantine failed: " + err.message, "error"); }
 }
 
 /* ---------- history ---------- */
 async function loadHistory() {
-  const box = $("#historyList"); box.innerHTML = "Loading…";
+  const box = $("#historyList"); box.textContent = "Loading…";
   try {
     const { entries } = await api("/api/history");
-    if (!entries.length) { box.innerHTML = ""; box.append(el("p", { class: "empty", html: ICON.empty + "No saved scans yet." })); return; }
+    box.textContent = "";
+    if (!entries.length) { box.append(el("p", { class: "empty", html: ICON.empty }, "No saved scans yet.")); return; }
     const table = el("table", {},
       el("caption", { text: "Past scans and sweeps, most recent first." }),
       el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When (UTC)" }), el("th", { scope: "col", text: "Kind" }), el("th", { scope: "col", text: "Target" }), el("th", { scope: "col", text: "Files" }), el("th", { scope: "col", text: "Threats" }))));
@@ -283,20 +410,21 @@ async function loadHistory() {
       el("td", { text: e.kind }),
       el("td", { text: e.root }),
       el("td", { text: String(e.files_scanned) }),
-      el("td", {}, e.threats ? badge(5) : el("span", { text: "0" })))));
-    table.append(tb); box.innerHTML = ""; box.append(table);
-  } catch (err) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: "Could not load history." })); }
+      el("td", {}, e.threats ? el("span", {}, badge(5), ` ${e.threats}`) : el("span", { text: "0" })))));
+    table.append(tb); box.append(table);
+  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", text: "Could not load history." })); }
 }
 
 /* ---------- quarantine ---------- */
 async function loadQuarantine() {
-  const box = $("#quarantineList"); box.innerHTML = "Loading…";
+  const box = $("#quarantineList"); box.textContent = "Loading…";
   try {
     const { entries } = await api("/api/quarantine");
     const active = entries.filter((e) => !e.restored);
-    if (!active.length) { box.innerHTML = ""; box.append(el("p", { class: "empty", html: ICON.quarantine + "Quarantine is empty." })); return; }
+    box.textContent = "";
+    if (!active.length) { box.append(el("p", { class: "empty", html: ICON.quarantine }, "Quarantine is empty.")); return; }
     const table = el("table", {},
-      el("caption", { text: "Isolated files. Restore returns a file; delete is permanent." }),
+      el("caption", { text: "Isolated files. Restore re-checks a file first, then returns it; delete is permanent." }),
       el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When" }), el("th", { scope: "col", text: "Verdict" }), el("th", { scope: "col", text: "Original path" }), el("th", { scope: "col", text: "Actions" }))));
     const tb = el("tbody");
     active.forEach((e) => {
@@ -306,22 +434,52 @@ async function loadQuarantine() {
         el("td", {}, badge(si < 0 ? 4 : si)),
         el("td", { text: e.original_path }),
         el("td", {}, el("div", { class: "row-actions" },
-          el("button", { class: "btn btn-small", type: "button", onclick: () => restoreEntry(e.id) }, "Restore"),
+          el("button", { class: "btn btn-small", type: "button", onclick: () => restoreEntry(e.id, e.original_path) }, "Restore"),
           el("button", { class: "btn btn-danger btn-small", type: "button", onclick: () => confirmDelete(e.id, e.original_path) }, "Delete")))));
     });
-    table.append(tb); box.innerHTML = ""; box.append(table);
-  } catch (err) { box.innerHTML = ""; box.append(el("p", { class: "empty", text: "Could not load quarantine." })); }
+    table.append(tb); box.append(table);
+  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", text: "Could not load quarantine." })); }
 }
-async function restoreEntry(id) {
-  try { const r = await api("/api/quarantine/restore", { method: "POST", body: JSON.stringify({ id }) }); toast("Restored to " + r.path, "success"); loadQuarantine(); }
-  catch (err) { toast("Restore failed: " + err.message, "error"); }
+
+/* Restore re-scans first. If the file is still detected, the server answers 409
+   and we ask - restoring live malware should never be a single mis-click. */
+async function restoreEntry(id, path, confirmed) {
+  try {
+    const r = await api("/api/quarantine/restore", { method: "POST", body: JSON.stringify({ id, confirm: Boolean(confirmed) }) });
+    toast("Restored to " + r.path, "success"); loadQuarantine();
+  } catch (err) {
+    if (err.status === 409 && err.data.needs_confirm && !confirmed) {
+      const why = err.data.still_threat
+        ? `"${path}" is STILL detected as a threat (${err.data.verdict}) by the current rules.`
+        : `"${path}" could not be fully re-checked before restoring.`;
+      openConfirm({
+        title: "Restore anyway?", body: `${why} Restoring puts the file back where it was, where it can run.`,
+        okLabel: "Restore anyway", onOk: () => restoreEntry(id, path, true),
+      });
+      return;
+    }
+    toast("Restore failed: " + err.message, "error");
+  }
 }
 
 /* ---------- confirm modal ---------- */
-let modalOpener = null, pendingDeleteId = null;
+let modalOpener = null, pendingOk = null;
 const backdrop = $("#confirmBackdrop"), modal = $("#confirmModal");
-function openModal(bodyText) { $("#confirmBody").textContent = bodyText; modalOpener = document.activeElement; backdrop.hidden = false; $("#confirmCancel").focus(); document.addEventListener("keydown", modalKeydown); }
-function closeModal() { backdrop.hidden = true; document.removeEventListener("keydown", modalKeydown); if (modalOpener && modalOpener.focus) modalOpener.focus(); pendingDeleteId = null; }
+function openConfirm({ title, body, okLabel, onOk }) {
+  $("#confirmTitle").textContent = title;
+  $("#confirmBody").textContent = body;
+  $("#confirmOk").textContent = okLabel;
+  pendingOk = onOk;
+  modalOpener = document.activeElement;
+  backdrop.hidden = false;
+  $("#confirmCancel").focus();
+  document.addEventListener("keydown", modalKeydown);
+}
+function closeModal() {
+  backdrop.hidden = true; document.removeEventListener("keydown", modalKeydown);
+  if (modalOpener && modalOpener.focus) modalOpener.focus();
+  pendingOk = null;
+}
 function modalKeydown(e) {
   if (e.key === "Escape") { e.preventDefault(); closeModal(); return; }
   if (e.key === "Tab") {
@@ -332,13 +490,34 @@ function modalKeydown(e) {
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }
 }
-function confirmDelete(id, path) { pendingDeleteId = id; openModal(`Permanently delete the quarantined copy of "${path}"? This cannot be undone.`); }
+function confirmDelete(id, path) {
+  openConfirm({
+    title: "Delete permanently?", okLabel: "Delete",
+    body: `Permanently delete the quarantined copy of "${path}"? This cannot be undone.`,
+    onOk: async () => {
+      try { await api("/api/quarantine/delete", { method: "POST", body: JSON.stringify({ id }) }); toast("Deleted permanently", "success"); loadQuarantine(); }
+      catch (err) { toast("Delete failed: " + err.message, "error"); }
+    },
+  });
+}
 $("#confirmCancel").addEventListener("click", closeModal);
 backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeModal(); });
-$("#confirmOk").addEventListener("click", async () => {
-  const id = pendingDeleteId; closeModal(); if (!id) return;
-  try { await api("/api/quarantine/delete", { method: "POST", body: JSON.stringify({ id }) }); toast("Deleted permanently", "success"); loadQuarantine(); }
-  catch (err) { toast("Delete failed: " + err.message, "error"); }
+$("#confirmOk").addEventListener("click", () => { const fn = pendingOk; closeModal(); if (fn) fn(); });
+
+/* ---------- quit ---------- */
+$("#quitBtn").addEventListener("click", () => {
+  openConfirm({
+    title: "Quit Warden?", okLabel: "Quit Warden",
+    body: "This stops Warden on this computer. Any scan that is running will be stopped. You can start Warden again from its shortcut.",
+    onOk: async () => {
+      try { await api("/api/shutdown", { method: "POST" }); } catch (_) { /* the server is going away */ }
+      $(".app").hidden = true;
+      const stopped = $("#stoppedScreen");
+      stopped.hidden = false;
+      $("#stoppedTitle").focus();
+      document.title = "Warden has stopped";
+    },
+  });
 });
 
 /* ---------- boot ---------- */

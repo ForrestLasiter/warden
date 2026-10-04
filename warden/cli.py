@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json as _json
+import signal
 import sys
+import threading
 from pathlib import Path
 
 import typer
@@ -27,7 +30,7 @@ from .config import Config
 from .history import History
 from .models import FileResult, ScanReport, Severity
 from .quarantine import Quarantine, QuarantineError
-from .scanner import Scanner
+from .scanner import ScanLimits, Scanner
 from .scheduler import Scheduler, SchedulerError, ScheduleSpec
 from .sweep import SystemSweep
 
@@ -130,6 +133,8 @@ def scan(
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
     online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
     archives: bool = typer.Option(True, "--archives/--no-archives", help="Look inside zip/tar/gzip archives (bounded)."),
+    timeout: float = typer.Option(0, "--timeout", min=0, help="Stop after this many seconds (0 = no limit). A stopped scan exits 2."),
+    max_files: int = typer.Option(0, "--max-files", min=0, help="Stop after this many files (0 = no limit)."),
 ):
     """Scan a file or folder for malware on demand."""
     target = Path(path)
@@ -176,7 +181,11 @@ def scan(
             if result.is_threat:
                 threats.append(result)
 
-        report = scanner.scan_path(target, recursive=recursive, progress=on_file)
+        with _interruptible() as interrupted:
+            report = scanner.scan_path(
+                target, recursive=recursive, progress=on_file,
+                limits=ScanLimits(cancel=interrupted.is_set, timeout=timeout or None,
+                                  max_files=max_files or None))
 
     _print_report(report, threshold=threshold, quiet=quiet)
 
@@ -202,6 +211,7 @@ def sweep(
     json_out: str | None = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
     online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
+    timeout: float = typer.Option(0, "--timeout", min=0, help="Stop after this many seconds (0 = no limit). A stopped sweep exits 2."),
 ):
     """Sweep the high-value spots malware hides: autoruns, processes, tasks, Temp, Downloads."""
     try:
@@ -241,7 +251,10 @@ def sweep(
             if result.is_threat:
                 threats.append(result)
 
-        report, categories = sweeper.run(quick=quick, progress=on_file)
+        with _interruptible() as interrupted:
+            report, categories = sweeper.run(
+                quick=quick, progress=on_file,
+                limits=ScanLimits(cancel=interrupted.is_set, timeout=timeout or None))
 
     # Category summary
     cat_table = Table(title="Swept locations", show_header=True)
@@ -268,6 +281,31 @@ def sweep(
         _do_quarantine(flagged)
 
     raise typer.Exit(_scan_exit_code(report))
+
+
+@contextlib.contextmanager
+def _interruptible():
+    """Turn the first Ctrl+C into a graceful stop: the scan finishes the file
+    it is on and reports what it covered (as incomplete). A second Ctrl+C
+    aborts immediately."""
+    flag = threading.Event()
+    previous = None
+
+    def handler(signum, frame):
+        if flag.is_set():
+            raise KeyboardInterrupt
+        flag.set()
+        console.print("[yellow]Stopping after the current file… (Ctrl+C again to abort)[/]")
+
+    try:
+        previous = signal.signal(signal.SIGINT, handler)
+    except (ValueError, OSError):       # not the main thread (tests, embedding)
+        previous = None
+    try:
+        yield flag
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
 
 
 def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
@@ -328,6 +366,8 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
     summary.add_row("Duration:", f"{dur:.1f}s")
     if report.threats:
         verdict_color, title = "red", "THREATS FOUND"
+    elif report.stopped:
+        verdict_color, title = "yellow", f"INCOMPLETE — STOPPED ({report.stopped.upper()})"
     elif not report.coverage_complete:
         verdict_color, title = "yellow", "INCOMPLETE — COVERAGE GAPS"
     else:

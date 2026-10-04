@@ -7,7 +7,9 @@ call. It knows nothing about presentation - it just produces a ``ScanReport``.
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from .archive import ArchiveLimits, ArchiveStats, archive_kind, iter_members
@@ -35,6 +37,28 @@ _MAX_MEMBER_NAME = 200
 
 # Callback fired after each file so UIs can show live progress.
 ProgressCallback = Callable[[FileResult], None]
+
+
+@dataclass(slots=True)
+class ScanLimits:
+    """Ways a scan can be told to stop early. A stopped scan is reported as
+    incomplete - it is never mistaken for a clean one."""
+    cancel: Callable[[], bool] | None = None    # polled between files
+    timeout: float | None = None                # seconds of wall-clock time
+    max_files: int | None = None                # files examined
+    _deadline: float | None = None
+
+    def start(self) -> None:
+        self._deadline = time.monotonic() + self.timeout if self.timeout else None
+
+    def reason(self, files_done: int) -> str | None:
+        if self.cancel is not None and self.cancel():
+            return "cancelled"
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            return "time limit reached"
+        if self.max_files is not None and files_done >= self.max_files:
+            return "file limit reached"
+        return None
 
 
 class Scanner:
@@ -101,13 +125,20 @@ class Scanner:
         *,
         recursive: bool = True,
         progress: ProgressCallback | None = None,
+        limits: ScanLimits | None = None,
     ) -> ScanReport:
         target = Path(target)
         report = ScanReport(root=str(target), engines=self.active_engines(),
                             warnings=list(self.engine_warnings),
                             advisories=list(self.advisories))
 
+        if limits:
+            limits.start()
         for path in self._iter_files(target, recursive=recursive, report=report):
+            if limits:
+                report.stopped = limits.reason(len(report.results))
+                if report.stopped:
+                    break
             result = self._scan_file(path, report)
             report.results.append(result)
             if progress:
@@ -121,12 +152,19 @@ class Scanner:
         paths: Iterable[str | Path],
         *,
         progress: ProgressCallback | None = None,
+        limits: ScanLimits | None = None,
     ) -> ScanReport:
         """Scan an explicit list of files (used by the system sweep)."""
         report = ScanReport(root="<file-list>", engines=self.active_engines(),
                             warnings=list(self.engine_warnings),
                             advisories=list(self.advisories))
+        if limits:
+            limits.start()
         for p in paths:
+            if limits:
+                report.stopped = limits.reason(len(report.results))
+                if report.stopped:
+                    break
             path = Path(p)
             if not path.is_file():
                 continue

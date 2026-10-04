@@ -168,6 +168,9 @@ class ScanReport:
     # (stale ClamAV signatures, online lookups suppressed by offline mode).
     advisories: list[str] = field(default_factory=list)
     unreadable: list[str] = field(default_factory=list)  # dirs/files we couldn't read
+    # Set when the scan ended before covering everything: "cancelled",
+    # "time limit reached" or "file limit reached".
+    stopped: str | None = None
     results: list[FileResult] = field(default_factory=list)
 
     @property
@@ -187,12 +190,14 @@ class ScanReport:
     def coverage_complete(self) -> bool:
         """False if any part of the scan couldn't be completed (unreadable paths,
         read/stat errors, engine failures, or an engine that failed to load)."""
-        return not (self.unreadable or self.errors or self.engine_errors or self.warnings)
+        return not (self.unreadable or self.errors or self.engine_errors or self.warnings
+                    or self.stopped)
 
     def coverage(self) -> dict[str, Any]:
         """A machine-readable summary of what was and wasn't fully scanned."""
         return {
             "complete": self.coverage_complete,
+            "stopped": self.stopped,
             "files_scanned": self.files_scanned,
             "skipped_by_extension": self.skipped_ext,
             "skipped_oversized": self.skipped_oversized,
@@ -234,6 +239,7 @@ class ScanReport:
             "engines": self.engines,
             "warnings": self.warnings,
             "advisories": self.advisories,
+            "stopped": self.stopped,
             "unreadable": self.unreadable,
             "coverage": self.coverage(),
             "counts_by_verdict": self.counts_by_verdict(),
