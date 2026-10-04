@@ -114,8 +114,10 @@ class Quarantine:
             try:
                 data = json.loads(self.index_path.read_text(encoding="utf-8"))
                 if isinstance(data, list):
-                    return data
-            except (json.JSONDecodeError, OSError):
+                    # Only well-formed entries: every caller may then rely on
+                    # each one being a dict with a string id.
+                    return [e for e in data if isinstance(e, dict) and isinstance(e.get("id"), str)]
+            except (ValueError, OSError):
                 pass
         # Missing or corrupt index -> rebuild from the per-entry sidecars so a
         # damaged index never makes quarantined files "disappear".
@@ -128,9 +130,9 @@ class Quarantine:
                 continue
             try:
                 data = json.loads(jf.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 continue
-            if isinstance(data, dict) and "id" in data:
+            if isinstance(data, dict) and isinstance(data.get("id"), str):
                 entries.append(data)
         if entries:
             self._save_index(entries)
@@ -273,7 +275,10 @@ class Quarantine:
                 # made the bundle; never let it choose where a file lands here.
                 raise QuarantineError(
                     "this item was imported from a bundle; choose where to restore it with --to")
-            target = Path(dest) if dest else Path(match["original_path"])
+            original = match.get("original_path")
+            if dest is None and (not isinstance(original, str) or not original):
+                raise QuarantineError("this item has no recorded path; choose one with --to")
+            target = Path(dest) if dest else Path(str(original))
 
             # Refuse to write through a symlink anywhere on the path, or to
             # overwrite an existing file unless the caller explicitly forces it.
@@ -286,8 +291,9 @@ class Quarantine:
 
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
-                _write_verified(self._plain_chunks(entry_id), target, match.get("sha256"),
-                                clobber=force)
+                expected = match.get("sha256")
+                _write_verified(self._plain_chunks(entry_id), target,
+                                expected if isinstance(expected, str) else None, clobber=force)
             except FileExistsError:
                 raise QuarantineError(
                     f"{target} already exists; refusing to overwrite (use force to override)") from None
@@ -554,9 +560,23 @@ def _entry_from_dict(e: Any) -> QuarantineEntry | None:
         return None
     kw = {k: v for k, v in e.items() if k in QuarantineEntry.__dataclass_fields__}
     try:
-        return QuarantineEntry(**kw)
+        entry = QuarantineEntry(**kw)
     except TypeError:
         return None
+    # Coerce the fields that get displayed/compared so a hand-edited or damaged
+    # index can't put a non-string where code (and the UI) expects text.
+    entry.id = str(entry.id)
+    entry.original_path = _clean_text(entry.original_path, 4096)
+    entry.quarantined_at = _clean_text(entry.quarantined_at, 64)
+    entry.verdict = _clean_text(entry.verdict, 32)
+    entry.size = entry.size if isinstance(entry.size, int) and not isinstance(entry.size, bool) else 0
+    entry.sha256 = entry.sha256 if isinstance(entry.sha256, str) else None
+    entry.findings = [f for f in entry.findings if isinstance(f, dict)] if isinstance(entry.findings, list) else []
+    entry.restored, entry.encrypted, entry.imported = (
+        entry.restored is True, entry.encrypted is True, entry.imported is True)
+    entry.restored_at = entry.restored_at if isinstance(entry.restored_at, str) else None
+    entry.last_rescan = entry.last_rescan if isinstance(entry.last_rescan, dict) else None
+    return entry
 
 
 def _clean_text(value: Any, limit: int) -> str:

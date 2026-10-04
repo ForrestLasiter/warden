@@ -8,12 +8,23 @@ watching the terminal at 3am) and what the GUI dashboard reads to show trends.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from .config import Config
 from .models import ScanReport
+
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_]{1,64}$")
+
+
+def _text(value: Any, default: str) -> str:
+    return value if isinstance(value, str) else default
+
+
+def _count(value: Any) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 @dataclass(slots=True)
@@ -59,15 +70,19 @@ class History:
         for fp in sorted(self.dir.glob("*.json"), reverse=True):
             try:
                 data = json.loads(fp.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except (ValueError, OSError):
                 continue
+            if not isinstance(data, dict):
+                continue        # not a report (damaged or foreign file)
             entries.append(HistoryEntry(
-                id=data.get("id", fp.stem),
-                kind=data.get("kind", "scan"),
-                when=data.get("finished") or data.get("started", ""),
-                root=data.get("root", "?"),
-                files_scanned=data.get("files_scanned", 0),
-                threats=data.get("threats", 0),
+                # The id is always the file name - it is what `load` looks up -
+                # never a value read out of the (untrusted) file body.
+                id=fp.stem,
+                kind=_text(data.get("kind"), "scan"),
+                when=_text(data.get("finished") or data.get("started"), ""),
+                root=_text(data.get("root"), "?"),
+                files_scanned=_count(data.get("files_scanned")),
+                threats=_count(data.get("threats")),
                 path=str(fp),
             ))
             if limit and len(entries) >= limit:
@@ -75,17 +90,22 @@ class History:
         return entries
 
     def load(self, entry_id: str) -> dict[str, Any] | None:
+        # The id is used in a file name and a glob: allow only the characters
+        # our own ids are made of, so it can't traverse or wildcard its way out.
+        if not _SAFE_ID.match(str(entry_id)):
+            return None
         fp = self.dir / f"{entry_id}.json"
         if not fp.exists():
             # allow prefix / partial id match
-            matches = list(self.dir.glob(f"{entry_id}*.json"))
+            matches = sorted(self.dir.glob(f"{entry_id}*.json"))
             if not matches:
                 return None
             fp = matches[0]
         try:
-            return json.loads(fp.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(fp.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
             return None
+        return data if isinstance(data, dict) else None
 
     def prune(self, keep: int = 50) -> int:
         files = sorted(self.dir.glob("*.json"), reverse=True)

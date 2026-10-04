@@ -93,9 +93,12 @@ class OnlineReputation:
     # -- cache ------------------------------------------------------------
     def _load_cache(self) -> dict[str, dict]:
         try:
-            return json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
             return {}
+        if not isinstance(data, dict):
+            return {}
+        return {k: v for k, v in data.items() if isinstance(v, dict)}
 
     def _save_cache(self) -> None:
         from .storage import atomic_write_json

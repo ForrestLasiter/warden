@@ -127,25 +127,22 @@ class Scheduler:
         if not self.registry.exists():
             return []
         try:
-            return json.loads(self.registry.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+            data = json.loads(self.registry.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
             return []
+        # The registry feeds a crontab / Task Scheduler: keep only entries that
+        # are fully well-formed, so a damaged or hand-edited file can neither
+        # crash Warden nor smuggle an unvalidated name/time/target into the OS.
+        if not isinstance(data, list):
+            return []
+        return [s.to_dict() for s in (_spec_from_dict(d) for d in data) if s is not None]
 
     def _save(self, specs: list[dict]) -> None:
         from .storage import atomic_write_json
         atomic_write_json(self.registry, specs)
 
     def list(self) -> list[ScheduleSpec]:
-        out: list[ScheduleSpec] = []
-        for s in self._load():
-            if not isinstance(s, dict) or "name" not in s:
-                continue
-            kw = {k: v for k, v in s.items() if k in ScheduleSpec.__dataclass_fields__}
-            try:
-                out.append(ScheduleSpec(**kw))
-            except TypeError:
-                continue  # malformed entry - skip rather than crash
-        return out
+        return [ScheduleSpec(**s) for s in self._load()]
 
     # -- public actions ---------------------------------------------------
     def add(self, spec: ScheduleSpec) -> str:
@@ -247,6 +244,34 @@ class Scheduler:
             _win_delete(name)
         else:
             _cron_sync([s for s in self._load() if s["name"] != name])
+
+
+def _spec_from_dict(d: Any) -> ScheduleSpec | None:
+    """A validated ScheduleSpec from a registry entry, or None if any field is
+    missing, mistyped or would not pass the same checks ``add`` applies."""
+    if not isinstance(d, dict):
+        return None
+    kw = {k: v for k, v in d.items() if k in ScheduleSpec.__dataclass_fields__}
+    try:
+        spec = ScheduleSpec(**kw)
+    except TypeError:
+        return None
+    strings = (spec.name, spec.kind, spec.target, spec.frequency, spec.time,
+               spec.min_severity, spec.created)
+    if not all(isinstance(v, str) for v in strings) or not isinstance(spec.quick, bool):
+        return None
+    try:
+        _validate_name(spec.name)
+        _validate_time(spec.time)
+        _validate_target(spec.target)
+        Severity.parse(spec.min_severity)
+    except (SchedulerError, KeyError, ValueError):
+        return None
+    if spec.kind not in ("scan", "sweep") or spec.frequency not in _FREQUENCIES:
+        return None
+    if spec.kind == "scan" and not spec.target:
+        return None
+    return spec
 
 
 # -- diagnostics helpers -------------------------------------------------
