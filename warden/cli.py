@@ -44,6 +44,8 @@ schedule_app = typer.Typer(help="Schedule recurring scans via the OS scheduler."
 app.add_typer(schedule_app, name="schedule")
 config_app = typer.Typer(help="View and change Warden settings (~/.warden/config.json).", no_args_is_help=True)
 app.add_typer(config_app, name="config")
+rules_app = typer.Typer(help="Install, verify and roll back signed rule packs.", no_args_is_help=True)
+app.add_typer(rules_app, name="rules")
 
 console = Console()
 
@@ -603,10 +605,251 @@ def update_rules():
         f"Community sources:\n"
         f"  * YARA rules:  github.com/Yara-Rules/rules , github.com/Neo23x0/signature-base\n"
         f"  * Hash feeds:  bazaar.abuse.ch (MalwareBazaar) export\n\n"
+        f"Signed, versioned rule packs (with rollback): [bold]warden rules --help[/]\n\n"
         f"For millions of ClamAV signatures, install ClamAV and run [bold]freshclam[/].",
         title="Adding rules & signatures",
         border_style="blue",
     ))
+
+
+# -- rule packs ----------------------------------------------------------
+def _rules_fail(exc: Exception) -> None:
+    console.print(f"[red]{_esc(exc)}[/]")
+    raise typer.Exit(2)
+
+
+@rules_app.command("list")
+def rules_list():
+    """Show installed rule packs (active and rollback versions)."""
+    from .rulepacks import RulePackManager
+    packs = RulePackManager().packs()
+    if not packs:
+        console.print("[dim]No rule packs installed. Bundled rules and your own files in the "
+                      "user rules folder are always used.[/]")
+        return
+    table = Table(title="Rule packs")
+    table.add_column("Name", style="bold")
+    table.add_column("Version", justify="right")
+    table.add_column("State")
+    table.add_column("Signed by")
+    table.add_column("Files", justify="right")
+    table.add_column("Installed")
+    for p in packs:
+        signer = f"{p.signer or 'key'} ({p.key_id})" if p.key_id else "[yellow]unsigned[/]"
+        table.add_row(_esc(p.name), str(p.version),
+                      "[green]active[/]" if p.active else "[dim]kept for rollback[/]",
+                      signer if not p.key_id else _esc(signer), str(p.files),
+                      _esc(p.installed_at.split("T")[0]))
+    console.print(table)
+
+
+def _read_pack_source(source: str, sig: str | None) -> tuple[bytes, bytes | None]:
+    """Load a pack (and its .sig) from a file path or an https:// URL."""
+    from .rulepacks import MAX_PACK_BYTES
+    if source.lower().startswith(("http://", "https://")):
+        pack = net.download(source, max_bytes=MAX_PACK_BYTES, config=Config.load())
+        sig_bytes: bytes | None = None
+        try:
+            sig_bytes = (Path(sig).read_bytes() if sig
+                         else net.download(source + ".sig", max_bytes=64 * 1024, config=Config.load()))
+        except net.NetworkError:
+            sig_bytes = None
+        return pack, sig_bytes
+    path = Path(source)
+    if not path.is_file():
+        raise FileNotFoundError(f"no such pack file: {source}")
+    sig_path = Path(sig) if sig else Path(str(path) + ".sig")
+    return path.read_bytes(), (sig_path.read_bytes() if sig_path.is_file() else None)
+
+
+@rules_app.command("install")
+def rules_install(
+    source: str = typer.Argument(..., help="Pack file (.wrp) or an https:// URL."),
+    sig: str | None = typer.Option(None, "--sig", help="Signature file (default: <pack>.sig)."),
+    allow_unsigned: bool = typer.Option(False, "--allow-unsigned", help="Install a pack with no signature."),
+    allow_downgrade: bool = typer.Option(False, "--allow-downgrade", help="Allow a version older than the active one."),
+):
+    """Verify and install a rule pack; the previous version is kept for rollback."""
+    from .rulepacks import RulePackError, RulePackManager
+    try:
+        pack, sig_bytes = _read_pack_source(source, sig)
+        info = RulePackManager().install(pack, sig_bytes, allow_unsigned=allow_unsigned,
+                                         allow_downgrade=allow_downgrade)
+    except (RulePackError, net.OfflineError, net.NetworkError, OSError) as exc:
+        _rules_fail(exc)
+        return
+    signed = f"signed by {info.signer or 'key'} ({info.key_id})" if info.key_id else "UNSIGNED"
+    console.print(f"[green]Installed[/] {_esc(info.name)} v{info.version} "
+                  f"({info.files} file(s), {_esc(signed)}).")
+    console.print(f"[dim]Roll back with: warden rules rollback {_esc(info.name)}[/]")
+
+
+@rules_app.command("verify")
+def rules_verify(
+    pack: str = typer.Argument(..., help="Pack file (.wrp) to check."),
+    sig: str | None = typer.Option(None, "--sig", help="Signature file (default: <pack>.sig)."),
+):
+    """Check a pack's signature and contents without installing it."""
+    from .rulepacks import RulePackError, RulePackManager, read_pack
+    try:
+        data, sig_bytes = _read_pack_source(pack, sig)
+        manifest, files = read_pack(data)
+        if sig_bytes is None:
+            console.print(f"[yellow]Structure OK, but NOT signed:[/] {_esc(manifest['name'])} "
+                          f"v{manifest['version']} ({len(files)} file(s)).")
+            raise typer.Exit(1)
+        key = RulePackManager().verify(data, sig_bytes)
+    except (RulePackError, net.OfflineError, net.NetworkError, OSError) as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Valid.[/] {_esc(manifest['name'])} v{manifest['version']}, "
+                  f"{len(files)} file(s), signed by {_esc(key['name'] or 'key')} ({key['key_id']}).")
+
+
+@rules_app.command("rollback")
+def rules_rollback(name: str = typer.Argument(..., help="Pack name.")):
+    """Switch a pack back to its previously active version."""
+    from .rulepacks import RulePackError, RulePackManager
+    try:
+        info = RulePackManager().rollback(name)
+    except RulePackError as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Rolled back[/] {_esc(info.name)} to v{info.version}.")
+
+
+@rules_app.command("remove")
+def rules_remove(name: str = typer.Argument(..., help="Pack name.")):
+    """Uninstall a rule pack (all versions)."""
+    from .rulepacks import RulePackError, RulePackManager
+    try:
+        RulePackManager().remove(name)
+    except RulePackError as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Removed[/] rule pack {_esc(name)}.")
+
+
+@rules_app.command("trust")
+def rules_trust(
+    public_key: str = typer.Argument(..., help="Public key file (.pub), or the base64 key itself."),
+    name: str = typer.Option("", "--name", help="A label for whose key this is."),
+):
+    """Trust a signing key: packs signed with it can be installed."""
+    from .rulepacks import RulePackError, RulePackManager
+    p = Path(public_key)
+    try:
+        text = p.read_text(encoding="utf-8") if p.is_file() else public_key
+        kid = RulePackManager().trust(text, name)
+    except (RulePackError, OSError) as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Trusted[/] signing key {kid}" + (f" ({_esc(name)})" if name else "") + ".")
+
+
+@rules_app.command("untrust")
+def rules_untrust(key_id: str = typer.Argument(..., help="Key id (from 'warden rules keys').")):
+    """Stop trusting a signing key."""
+    from .rulepacks import RulePackError, RulePackManager
+    try:
+        RulePackManager().untrust(key_id)
+    except RulePackError as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Removed[/] key {_esc(key_id)} from the trust store.")
+
+
+@rules_app.command("keys")
+def rules_keys():
+    """List trusted signing keys."""
+    from .rulepacks import RulePackManager
+    keys = RulePackManager().trusted_keys()
+    if not keys:
+        console.print("[dim]No trusted signing keys. Add one with 'warden rules trust <key.pub>'.[/]")
+        return
+    table = Table(title="Trusted rule-pack signing keys")
+    table.add_column("Key id", style="bold")
+    table.add_column("Name")
+    table.add_column("Added")
+    for k in keys:
+        table.add_row(k["key_id"], _esc(k["name"] or "-"), _esc(k["added"].split("T")[0]))
+    console.print(table)
+
+
+@rules_app.command("keygen")
+def rules_keygen(
+    name: str = typer.Argument(..., help="Base name for the key files."),
+    out: str = typer.Option(".", "--out", help="Folder to write <name>.key and <name>.pub into."),
+):
+    """Create a signing key pair for publishing your own rule packs."""
+    import base64
+
+    from .rulepacks import RulePackError, generate_keypair, key_id
+    from .storage import atomic_write_text
+    out_dir = Path(out)
+    key_path, pub_path = out_dir / f"{name}.key", out_dir / f"{name}.pub"
+    if key_path.exists() or pub_path.exists():
+        console.print(f"[red]Refusing to overwrite[/] {_esc(key_path)} / {_esc(pub_path)}")
+        raise typer.Exit(2)
+    try:
+        priv, pub = generate_keypair()
+        atomic_write_text(key_path, base64.b64encode(priv).decode("ascii") + "\n", mode=0o600)
+        atomic_write_text(pub_path, base64.b64encode(pub).decode("ascii") + "\n")
+    except (RulePackError, OSError) as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Created[/] key {key_id(pub)}")
+    console.print(f"  private: {_esc(key_path)}  [yellow](keep secret - anyone with it can sign packs)[/]")
+    console.print(f"  public:  {_esc(pub_path)}  [dim](share; users run: warden rules trust {_esc(pub_path.name)})[/]")
+
+
+@rules_app.command("build")
+def rules_build(
+    folder: str = typer.Argument(..., help="Folder of .yar/.yara rules and/or malware_hashes.txt."),
+    name: str = typer.Option(..., "--name", help="Pack name (a-z, 0-9, '-', '_')."),
+    version: int = typer.Option(..., "--version", help="Pack version (a positive integer; must increase)."),
+    description: str = typer.Option("", "--description", help="Short description."),
+    key: str | None = typer.Option(None, "--key", help="Private key file to sign the pack with."),
+    out: str | None = typer.Option(None, "--out", help="Output file (default: <name>-<version>.wrp)."),
+):
+    """Build (and optionally sign) a rule pack from a folder of rules."""
+    from .rulepacks import RulePackError, _compile_check, _decode_key, build_pack, read_pack, sign_pack
+    from .storage import atomic_write_bytes
+    try:
+        pack = build_pack(Path(folder), name, version, description)
+        _manifest, files = read_pack(pack)
+        _compile_check(files)
+        out_path = Path(out or f"{name}-{version}.wrp")
+        atomic_write_bytes(out_path, pack)
+        console.print(f"[green]Built[/] {_esc(out_path)} ({len(files)} file(s)).")
+        if key:
+            sig_doc = sign_pack(pack, _decode_key(Path(key).read_text(encoding="utf-8"), "private key"))
+            atomic_write_bytes(Path(str(out_path) + ".sig"), sig_doc)
+            console.print(f"[green]Signed[/] {_esc(str(out_path) + '.sig')}")
+        else:
+            console.print("[yellow]Not signed.[/] Sign it with: warden rules sign "
+                          f"{_esc(out_path)} --key <name>.key")
+    except (RulePackError, OSError) as exc:
+        _rules_fail(exc)
+
+
+@rules_app.command("sign")
+def rules_sign(
+    pack: str = typer.Argument(..., help="Pack file to sign."),
+    key: str = typer.Option(..., "--key", help="Private key file (from 'warden rules keygen')."),
+):
+    """Write a detached signature (<pack>.sig) for a rule pack."""
+    from .rulepacks import RulePackError, _decode_key, read_pack, sign_pack
+    from .storage import atomic_write_bytes
+    try:
+        data = Path(pack).read_bytes()
+        read_pack(data)     # never sign something that isn't a well-formed pack
+        sig_doc = sign_pack(data, _decode_key(Path(key).read_text(encoding="utf-8"), "private key"))
+        atomic_write_bytes(Path(pack + ".sig"), sig_doc)
+    except (RulePackError, OSError) as exc:
+        _rules_fail(exc)
+        return
+    console.print(f"[green]Signed[/] {_esc(pack + '.sig')}")
 
 
 # -- history subcommands -------------------------------------------------

@@ -43,6 +43,11 @@ class Scanner:
         self.config.ensure_dirs()
 
         rule_dirs = [BUNDLED_RULES_DIR, self.config.rules_user_dir]
+        # Installed rule packs: only those whose files still match their
+        # manifest are loaded; a tampered pack becomes an engine warning.
+        from .rulepacks import RulePackManager
+        pack_dirs, pack_warnings = RulePackManager(self.config).active_dirs()
+        rule_dirs += pack_dirs
         reputation = None
         self.advisories: list[str] = []
         if self.config.online_hash_lookup:
@@ -70,7 +75,7 @@ class Scanner:
 
         # An engine that FAILED to load (e.g. a broken YARA ruleset) silently
         # reduces coverage; record it so scans are reported degraded, not clean.
-        self.engine_warnings: list[str] = []
+        self.engine_warnings: list[str] = list(pack_warnings)
         for e in self._engines:
             load_error = getattr(e, "load_error", None)
             if load_error:
