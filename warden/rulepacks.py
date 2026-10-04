@@ -54,6 +54,11 @@ from .config import Config
 from .models import now_iso
 from .storage import atomic_write_bytes, atomic_write_json, file_lock, secure_dir
 
+# Warden uses only modern primitives (Ed25519, AES-GCM, HKDF, scrypt). Telling
+# the library not to load OpenSSL's "legacy" provider keeps it from failing at
+# import on machines where that optional module isn't present.
+os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
+
 try:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
