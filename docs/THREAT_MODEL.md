@@ -258,14 +258,18 @@ to the DNS-over-HTTPS resolver) that you possess a specific file. See
   version-pinned and hash-locked (`pip install --require-hashes`).
 - Releases publish `SHA256SUMS`, a Sigstore keyless signature bound to the
   release workflow's identity, SLSA build provenance, and SPDX + CycloneDX SBOMs.
-- Release tags are protected by a repository ruleset.
+- Release tags are protected by a repository ruleset. `main` accepts changes
+  only through pull requests, and changes to the release pipeline, installers
+  and dependency locks require code-owner review (`.github/CODEOWNERS`).
 - The installers verify the checksum and **fail closed** if it cannot be
   verified; a mismatch is always fatal.
 - CI runs ruff, mypy, bandit, pip-audit, ShellCheck, PSScriptAnalyzer and the
   test suite on Linux (x64, ARM64), Windows and macOS (Apple Silicon, Intel),
   Python 3.10–3.14.
 
-*Residual risk:* the binaries are **not Authenticode-signed or Apple-notarized**
+*Residual risk:* with a single maintainer, "code-owner review" of their own
+change is an admin bypass recorded on the pull request, not an independent
+review; a compromised maintainer account defeats it. The binaries are **not Authenticode-signed or Apple-notarized**
 (those require paid certificates, which this project does not buy), so Windows
 SmartScreen and macOS Gatekeeper will warn. Verify with [VERIFY.md](VERIFY.md).
 `curl | sh` / `irm | iex` trust GitHub's TLS for the *installer script* itself.

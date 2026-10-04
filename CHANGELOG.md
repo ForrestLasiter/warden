@@ -83,6 +83,9 @@ everything below is additive unless marked **Changed**.
   installer (x64 build under emulation).
 - Releases carry a **Sigstore signature**, **SLSA build provenance** and
   **SBOMs** (SPDX + CycloneDX); release tags are protected. `docs/VERIFY.md`.
+- `main` is protected by a ruleset (pull requests only; no force-push or
+  deletion; code-owner review for the release pipeline, installers and
+  dependency locks).
 - Installers **fail closed** when the download cannot be verified, and accept
   options (install dir, version, no shortcuts, no PATH change, uninstall).
   Re-running upgrades in place; the previous binary is kept, restored

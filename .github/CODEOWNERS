@@ -1,10 +1,16 @@
-# Default owner for everything in this repo.
-* @ForrestLasiter
-
-# Security-sensitive paths: release/build pipeline, installers, and the release
-# verification docs. Changes here especially warrant review.
-/.github/workflows/   @ForrestLasiter
-/scripts/             @ForrestLasiter
-/packaging/           @ForrestLasiter
-/requirements-release.txt @ForrestLasiter
-/docs/VERIFY.md       @ForrestLasiter
+# Release-critical paths. The `main` branch ruleset requires a code-owner review
+# for any pull request that touches these: the build and release pipeline, the
+# installers, the dependency locks and the verification docs. A change here can
+# alter what ends up in a published binary or how users check it.
+#
+# (There is deliberately no catch-all `*` owner: ordinary code and docs changes
+# go through CI and a pull request, without needing this extra gate.)
+/.github/                  @ForrestLasiter
+/scripts/                  @ForrestLasiter
+/packaging/                @ForrestLasiter
+/pyproject.toml            @ForrestLasiter
+/requirements-release.in   @ForrestLasiter
+/requirements-release.txt  @ForrestLasiter
+/docs/VERIFY.md            @ForrestLasiter
+/docs/RELEASING.md         @ForrestLasiter
+/SECURITY.md               @ForrestLasiter

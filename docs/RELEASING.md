@@ -28,6 +28,15 @@ For maintainers. A release is a version tag; everything else is automated by
    ```
 5. Merge to `main` through a pull request with CI green on every platform.
 
+`main` is protected by a repository ruleset: no direct pushes, no force pushes,
+no deletion, and any pull request touching a path in `.github/CODEOWNERS` (the
+workflows, installers, packaging, dependency locks, release docs) needs a
+code-owner review. GitHub does not let an author approve their own pull request,
+so while there is a single maintainer those merges use the repository-admin
+bypass ("Merge without waiting for requirements", or `gh pr merge --admin`) —
+which is recorded in the pull request. With a second maintainer the review is
+enforced for real. The rulesets live under *Settings → Rules → Rulesets*.
+
 ## 2. Tag
 
 ```bash
