@@ -5,14 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    name: Tests (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+  quality:
+    name: Lint, types & security checks
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -21,7 +24,53 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest
-      - name: Run tests
-        run: pytest -q
+          pip install -e ".[dev]"
+      - name: Ruff (lint)
+        run: ruff check .
+      - name: Mypy (types, every target platform)
+        run: |
+          mypy --platform linux warden
+          mypy --platform win32 warden
+          mypy --platform darwin warden
+      - name: Bandit (security lint)
+        run: bandit -q -r warden -c pyproject.toml
+      - name: pip-audit (locked release dependencies)
+        run: pip-audit --require-hashes --disable-pip -r requirements-release.txt
+      - name: ShellCheck
+        run: shellcheck scripts/*.sh
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Set-PSRepository PSGallery -InstallationPolicy Trusted
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          $findings = Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings scripts/PSScriptAnalyzerSettings.psd1
+          $findings | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+          if (@($findings).Count -gt 0) { exit 1 }
+
+  test:
+    name: Tests (py${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          - { os: ubuntu-24.04-arm, python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.12" }      # Apple Silicon
+          - { os: macos-15-intel, python: "3.12" }    # Intel
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run tests with coverage
+        run: pytest -q --cov --cov-report=term-missing:skip-covered --cov-fail-under=70

@@ -5,7 +5,7 @@ import shlex
 import pytest
 
 from warden.config import Config
-from warden.scheduler import Scheduler, ScheduleSpec, SchedulerError, _cron_line
+from warden.scheduler import Scheduler, SchedulerError, ScheduleSpec, _cron_line
 
 
 def test_cron_line_quotes_target_against_injection():

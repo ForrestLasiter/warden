@@ -7,7 +7,7 @@ defaults. Nothing here requires the file to exist.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import default_data_dir
@@ -59,7 +59,12 @@ class Config:
     follow_symlinks: bool = False
     use_clamav: bool = True          # used only if clam binaries are found
     online_hash_lookup: bool = False  # opt-in; sends file hashes to a remote API
+    offline: bool = False             # hard switch: never touch the network
     virustotal_api_key: str = ""      # optional; enables the richer VT provider
+    scan_archives: bool = True        # look inside zip/tar/gzip/... (bounded)
+    quarantine_encryption: bool = False   # seal quarantined files with AES-256-GCM
+    quarantine_retention_days: int = 0    # 0 = keep until deleted; used by `purge --expired`
+    check_signatures: bool = True     # ask the OS for publisher signatures on flagged files
     skip_extensions: set[str] = field(default_factory=lambda: set(SKIP_EXTENSIONS))
 
     # Derived paths -------------------------------------------------------
@@ -93,7 +98,7 @@ class Config:
 
     # Persistence ---------------------------------------------------------
     @classmethod
-    def load(cls, data_dir: Path | None = None) -> "Config":
+    def load(cls, data_dir: Path | None = None) -> Config:
         cfg = cls(data_dir=data_dir or default_data_dir())
         path = cfg.config_path
         if not path.exists():
@@ -111,6 +116,13 @@ class Config:
         cfg.follow_symlinks = _as_bool(raw.get("follow_symlinks"), cfg.follow_symlinks)
         cfg.use_clamav = _as_bool(raw.get("use_clamav"), cfg.use_clamav)
         cfg.online_hash_lookup = _as_bool(raw.get("online_hash_lookup"), cfg.online_hash_lookup)
+        cfg.offline = _as_bool(raw.get("offline"), cfg.offline)
+        cfg.scan_archives = _as_bool(raw.get("scan_archives"), cfg.scan_archives)
+        cfg.quarantine_encryption = _as_bool(
+            raw.get("quarantine_encryption"), cfg.quarantine_encryption)
+        cfg.quarantine_retention_days = _clamp_int(
+            raw.get("quarantine_retention_days"), cfg.quarantine_retention_days, 0, 36500)
+        cfg.check_signatures = _as_bool(raw.get("check_signatures"), cfg.check_signatures)
         cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key) or "")
         exts = raw.get("skip_extensions")
         if isinstance(exts, (list, tuple, set)):
@@ -124,10 +136,16 @@ class Config:
             "follow_symlinks": self.follow_symlinks,
             "use_clamav": self.use_clamav,
             "online_hash_lookup": self.online_hash_lookup,
-            "virustotal_api_key": self.virustotal_api_key,
+            "offline": self.offline,
+            "scan_archives": self.scan_archives,
+            "quarantine_encryption": self.quarantine_encryption,
+            "quarantine_retention_days": self.quarantine_retention_days,
+            "check_signatures": self.check_signatures,
             "skip_extensions": sorted(self.skip_extensions),
         }
-        # Atomic + owner-only (the file can contain the VirusTotal API key).
+        # The VirusTotal key is NOT written here anymore - it lives in the OS
+        # secret store (see warden/secrets.py). Saving scrubs any legacy
+        # plaintext key from config.json. Still owner-only, and atomic.
         atomic_write_json(self.config_path, data, mode=0o600)
 
 

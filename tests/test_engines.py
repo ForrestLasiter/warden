@@ -1,14 +1,12 @@
 """Fast, offline unit tests. No real malware, no network, no disk-write of EICAR
 (so Windows Defender can't interfere)."""
 
-from pathlib import Path
 
 from warden.config import BUNDLED_RULES_DIR
 from warden.engines.base import ScanContext
-from warden.engines.yara_engine import YaraEngine
 from warden.engines.heuristics import HeuristicsEngine
+from warden.engines.yara_engine import YaraEngine
 from warden.models import Severity
-
 
 # EICAR built at runtime so this source file itself isn't flagged by scanners.
 EICAR = (
@@ -17,16 +15,8 @@ EICAR = (
 ).encode()
 
 
-class _MemCtx(ScanContext):
-    def __init__(self, data: bytes, name: str = "mem.bin"):
-        self.path = Path(name)
-        self.size = len(data)
-        self.max_read = 1 << 20
-        self._data = data
-        self._sha256 = None
-        self._sha1 = None
-        self._digests_done = False
-        self._read_error = None
+def _MemCtx(data: bytes, name: str = "mem.bin") -> ScanContext:
+    return ScanContext.from_bytes(name, data)
 
 
 def test_yara_detects_eicar():
@@ -80,6 +70,7 @@ def test_clean_file_has_no_findings():
 
 def test_scancontext_sha1_and_sha256(tmp_path):
     import hashlib
+
     from warden.engines.base import ScanContext
     data = b"warden hashing test"
     f = tmp_path / "x.bin"

@@ -9,8 +9,8 @@ dist/
 venv/
 .pytest_cache/
 
-# Argus runtime data (user-local; never commit quarantined files or hashes)
-.argus/
+# Warden runtime data (user-local; never commit quarantined files or hashes)
+.warden/
 *.qbin
 
 # OS / editor
@@ -21,3 +21,14 @@ Thumbs.db
 
 # Local scan reports
 report*.json
+
+# Test / coverage artefacts
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Local tooling
+.claude/

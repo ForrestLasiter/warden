@@ -89,7 +89,10 @@ class HashEngine:
             ))
 
         # Online reputation - opt-in, candidate file types only, cached.
-        if self._online and not label and ctx.path.suffix.lower() in _ONLINE_CANDIDATE_EXTS:
+        # Never for in-memory content (archive members): one zip could otherwise
+        # fan out into thousands of lookups.
+        if (self._online and not label and not ctx.in_memory
+                and ctx.path.suffix.lower() in _ONLINE_CANDIDATE_EXTS):
             result = self._reputation.check(digest, ctx.sha1())
             if result and result.malicious:
                 findings.append(Finding(

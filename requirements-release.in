@@ -8,4 +8,5 @@ rich
 pefile
 psutil
 httpx
+cryptography>=42
 pyinstaller

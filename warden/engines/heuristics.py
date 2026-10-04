@@ -14,11 +14,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-try:
-    import pefile
-except Exception:  # pragma: no cover
-    pefile = None  # type: ignore
-
+from .. import binfmt
 from ..models import Finding, Severity
 from .base import ScanContext
 
@@ -27,13 +23,6 @@ _EXECUTABLE_EXTS = {".exe", ".dll", ".scr", ".sys", ".com", ".pif", ".cpl"}
 _SCRIPT_EXTS = {".ps1", ".vbs", ".js", ".jse", ".wsf", ".bat", ".cmd", ".hta", ".vbe"}
 # Real extension hidden behind a fake-looking one (classic phishing trick).
 _LURE_EXTS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".jpg", ".png", ".txt", ".mp4"}
-
-# Known packer section names -> a hint that the binary is packed/obfuscated.
-_PACKER_SECTIONS = {
-    b"UPX0", b"UPX1", b"UPX2", b".aspack", b".adata", b"ASPack", b".nsp0",
-    b".nsp1", b"FSG!", b".petite", b"pebundle", b"MPRESS1", b"MPRESS2",
-    b".themida", b".vmp0", b".vmp1", b".enigma1",
-}
 
 _SUSPICIOUS_SCRIPT_TOKENS = (
     "FromBase64String", "-enc", "-EncodedCommand", "IEX", "Invoke-Expression",
@@ -44,8 +33,7 @@ _SUSPICIOUS_SCRIPT_TOKENS = (
 )
 
 
-# Upper bounds so a crafted/huge file can't make an engine hang or balloon memory.
-_MAX_PE_BYTES = 64 * 1024 * 1024        # skip pefile parsing above this
+# Upper bound so a crafted/huge file can't make an engine hang or balloon memory.
 _MAX_SCRIPT_BYTES = 2 * 1024 * 1024     # only token-scan the first 2 MB
 
 
@@ -57,7 +45,7 @@ class HeuristicsEngine:
 
     @property
     def status(self) -> str:
-        return "on" + ("" if pefile else " (pefile missing: no PE analysis)")
+        return "on" + ("" if binfmt.pefile else " (pefile missing: no PE analysis)")
 
     def scan(self, ctx: ScanContext) -> list[Finding]:
         findings: list[Finding] = []
@@ -72,13 +60,16 @@ class HeuristicsEngine:
         if ext in _SCRIPT_EXTS or _looks_like_text(data):
             findings += self._script_tokens(data)
 
-        # 3) PE structural heuristics (bounded: pefile can be slow/heavy on
-        #    crafted or very large binaries).
-        if data[:2] == b"MZ" and pefile is not None and ctx.size <= _MAX_PE_BYTES:
-            findings += self._pe_checks(data, ext)
+        # 3) Executable structure (PE / ELF / Mach-O). The parsed metadata is
+        #    shared through the context so the scanner can attach it to the
+        #    result without parsing the file a second time.
+        info = binfmt.binary_info(data, ctx.size)
+        ctx.cache["binary"] = info
+        if info:
+            findings += self._binary_findings(info, ext)
 
         # 4) High entropy for small executables (possible packed dropper)
-        if ext in _EXECUTABLE_EXTS and 0 < ctx.size <= 5 * 1024 * 1024:
+        if (ext in _EXECUTABLE_EXTS or info) and 0 < ctx.size <= 5 * 1024 * 1024:
             ent = _entropy(data)
             if ent >= 7.2:
                 findings.append(Finding(
@@ -120,70 +111,39 @@ class HeuristicsEngine:
             meta={"tokens": hits[:12]},
         )]
 
-    def _pe_checks(self, data: bytes, ext: str) -> list[Finding]:
-        findings: list[Finding] = []
-        try:
-            pe = pefile.PE(data=data, fast_load=True)
-        except Exception:  # noqa: BLE001 - not a valid PE
-            return findings
-        try:
-            # Packer section names
-            for section in pe.sections:
-                raw = section.Name.rstrip(b"\x00")
-                if raw in _PACKER_SECTIONS or raw.upper().startswith(b"UPX"):
-                    findings.append(Finding(
-                        engine=self.name, name="packer-section",
-                        severity=Severity.LOW,
-                        description=f"PE contains packer section '{raw.decode(errors='replace')}'",
-                        meta={"section": raw.decode(errors="replace")},
-                    ))
-                    break
-
-            # Executable masquerading as a DLL or vice versa vs. characteristics
-            characteristics = getattr(pe.FILE_HEADER, "Characteristics", 0)
-            is_dll = bool(characteristics & 0x2000)
-            if is_dll and ext == ".exe":
-                findings.append(Finding(
-                    engine=self.name, name="dll-with-exe-extension",
-                    severity=Severity.LOW,
-                    description="File is a DLL but has a .exe extension",
-                ))
-
-            # Very small PE with imports pulling network/exec APIs = dropper-ish.
-            try:
-                pe.parse_data_directories(directories=[
-                    pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]
-                ])
-                risky = _risky_imports(pe)
-                if risky:
-                    findings.append(Finding(
-                        engine=self.name, name="risky-imports",
-                        severity=Severity.LOW,
-                        description=f"Imports notable APIs: {', '.join(sorted(risky)[:6])}",
-                        meta={"imports": sorted(risky)},
-                    ))
-            except Exception:  # noqa: BLE001
-                pass
-        finally:
-            pe.close()
-        return findings
+    def _binary_findings(self, info: dict, ext: str) -> list[Finding]:
+        out: list[Finding] = []
+        if info.get("format") == "pe" and info.get("type") == "dll" and ext == ".exe":
+            out.append(Finding(
+                engine=self.name, name="dll-with-exe-extension", severity=Severity.LOW,
+                description="File is a DLL but has a .exe extension"))
+        for obs in info.get("observations", []):
+            oid = obs.get("id")
+            text = _OBSERVATIONS.get(oid)
+            if text is None:
+                continue
+            detail = obs.get("section") or ", ".join(
+                (obs.get("imports") or obs.get("sections") or obs.get("segments") or [])[:6])
+            out.append(Finding(
+                engine=self.name, name=oid, severity=Severity.LOW,
+                description=text.format(detail=detail),
+                meta={k: v for k, v in obs.items() if k != "id"},
+            ))
+        return out
 
 
-def _risky_imports(pe) -> set[str]:
-    risky_names = {
-        "VirtualAllocEx", "WriteProcessMemory", "CreateRemoteThread",
-        "SetWindowsHookEx", "URLDownloadToFile", "WinExec", "ShellExecuteA",
-        "CreateProcessA", "InternetOpenA", "InternetReadFile", "CryptEncrypt",
-        "RegSetValueExA", "GetProcAddress", "LoadLibraryA", "IsDebuggerPresent",
-    }
-    found: set[str] = set()
-    for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []) or []:
-        for imp in entry.imports:
-            if imp.name:
-                nm = imp.name.decode(errors="replace")
-                if nm in risky_names:
-                    found.add(nm)
-    return found
+# Structural observations from binfmt -> human wording. All LOW: each is a
+# reason to look twice, none is proof on its own.
+_OBSERVATIONS = {
+    "packer-section": "PE contains packer section '{detail}'",
+    "risky-imports": "Imports notable APIs: {detail}",
+    "pe-writable-executable-section": "PE has section(s) that are both writable and executable: {detail}",
+    "elf-rwx-segment": "ELF maps a segment that is readable, writable and executable",
+    "elf-no-section-headers": "ELF has no section headers (typical of packed or hand-built binaries)",
+    "elf-packed-upx": "ELF is packed with UPX",
+    "macho-rwx-segment": "Mach-O has segment(s) that are readable, writable and executable: {detail}",
+    "macho-unsigned-arm64": "Apple Silicon Mach-O carries no code signature at all",
+}
 
 
 def _looks_like_text(data: bytes) -> bool:

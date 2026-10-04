@@ -7,7 +7,7 @@
   <meta name="description" content="Warden — open-source, on-demand malware scanner.">
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/style.css">
-  <script>window.WARDEN_TOKEN = "__WARDEN_TOKEN__";</script>
+  <meta name="warden-token" content="__WARDEN_TOKEN__">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -57,6 +57,11 @@
           <button type="button" class="theme-btn" data-theme-choice="dark" aria-pressed="false" title="Dark">Dark</button>
           <button type="button" class="theme-btn" data-theme-choice="system" aria-pressed="true" title="System">Auto</button>
         </div>
+        <button type="button" class="btn btn-small btn-block" id="quitBtn">Quit Warden</button>
+        <p class="local-note">
+          <svg class="nav-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Local only — this page runs on this computer (<span id="localAddress">127.0.0.1</span>) and is not reachable from your network.</span>
+        </p>
         <p class="sidebar-version" id="footerVersion">Warden</p>
       </div>
     </aside>
@@ -69,6 +74,7 @@
       </header>
 
       <main id="main" tabindex="-1">
+        <div id="notices" class="notices" aria-live="polite" hidden></div>
         <!-- OVERVIEW -->
         <section role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" tabindex="0">
           <div id="overviewStats" class="stat-grid" aria-live="polite"></div>
@@ -138,6 +144,7 @@
             <div class="field-check scan-online">
               <input type="checkbox" id="scanOnline" name="online">
               <label for="scanOnline">Check hashes online (opt-in — sends file hashes, not files, to a reputation service)</label>
+              <span class="offline-note" hidden>Unavailable: offline mode is on.</span>
             </div>
           </div>
           <div id="scanProgress" class="progress-wrap" hidden></div>
@@ -148,8 +155,8 @@
         <section role="tabpanel" id="panel-sweep" aria-labelledby="tab-sweep" tabindex="0" hidden>
           <div class="card">
             <div class="card-head"><h2>System sweep</h2></div>
-            <p class="lede">Automatically scan the spots malware hides: startup entries, running
-              processes, scheduled tasks, Temp, and Downloads.</p>
+            <p class="lede">Automatically scan the spots malware hides: startup and persistence
+              entries, running processes, scheduled tasks, Temp, and Downloads.</p>
             <form id="sweepForm" class="controls">
               <div class="field field-check">
                 <input type="checkbox" id="sweepQuick" name="quick">
@@ -158,6 +165,7 @@
               <div class="field field-check">
                 <input type="checkbox" id="sweepOnline" name="online">
                 <label for="sweepOnline">Check hashes online (opt-in)</label>
+                <span class="offline-note" hidden>Unavailable: offline mode is on.</span>
               </div>
               <div class="field field-end">
                 <button type="submit" class="btn btn-primary" id="sweepBtn">Run sweep</button>
@@ -193,9 +201,20 @@
           <span aria-hidden="true">·</span>
           <a href="https://github.com/ForrestLasiter/warden/issues" target="_blank" rel="noopener">Report an issue</a>
         </span>
-        <span class="footer-note">On-demand scanner — keep your OS antivirus on too.</span>
+        <span class="footer-note">On-demand scanner, not real-time protection — keep your OS antivirus on too.</span>
       </footer>
     </div>
+  </div>
+
+  <!-- Shown after "Quit Warden": the server is gone, so say so plainly. -->
+  <div id="stoppedScreen" class="stopped" hidden>
+    <svg class="illus" viewBox="0 0 160 160" fill="none" aria-hidden="true" focusable="false">
+      <circle class="illus-ring" cx="80" cy="80" r="66" stroke-dasharray="4 8"/>
+      <path class="illus-shield" d="M80 26 L120 40 V78 C120 108 102 126 80 134 C58 126 40 108 40 78 V40 Z"/>
+      <path class="illus-check" d="M64 82 L75 93 L98 68" />
+    </svg>
+    <h1 id="stoppedTitle" tabindex="-1">Warden has stopped</h1>
+    <p>You can close this tab. To use Warden again, open it from its shortcut.</p>
   </div>
 
   <div id="toast" role="status" aria-live="polite" class="toast" hidden></div>
@@ -208,7 +227,7 @@
       <p id="confirmBody">Are you sure?</p>
       <div class="modal-actions">
         <button type="button" class="btn" id="confirmCancel">Cancel</button>
-        <button type="button" class="btn btn-danger" id="confirmOk">Delete</button>
+        <button type="button" class="btn btn-danger" id="confirmOk">Confirm</button>
       </div>
     </div>
   </div>

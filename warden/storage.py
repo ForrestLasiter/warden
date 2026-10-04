@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -45,7 +47,7 @@ def _acquire(fd: int, timeout: float) -> None:
     deadline = time.monotonic() + timeout
     while True:
         try:
-            if _IS_WINDOWS:
+            if sys.platform == "win32":
                 import msvcrt
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:
@@ -54,13 +56,13 @@ def _acquire(fd: int, timeout: float) -> None:
             return
         except OSError:
             if time.monotonic() >= deadline:
-                raise TimeoutError("could not acquire Warden state lock in time")
+                raise TimeoutError("could not acquire Warden state lock in time") from None
             time.sleep(0.05)
 
 
 def _release(fd: int) -> None:
     try:
-        if _IS_WINDOWS:
+        if sys.platform == "win32":
             import msvcrt
             os.lseek(fd, 0, os.SEEK_SET)
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)

@@ -9,7 +9,7 @@ the GUI, and stored history.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,7 +30,7 @@ class Severity(enum.IntEnum):
         return self.name.capitalize()
 
     @classmethod
-    def parse(cls, value: str | int | "Severity") -> "Severity":
+    def parse(cls, value: str | int | Severity) -> Severity:
         if isinstance(value, Severity):
             return value
         if isinstance(value, int):
@@ -56,7 +56,7 @@ class Finding:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Finding":
+    def from_dict(cls, d: dict[str, Any]) -> Finding:
         return cls(
             engine=d.get("engine", "?"),
             name=d.get("name", "?"),
@@ -66,7 +66,7 @@ class Finding:
         )
 
     @classmethod
-    def engine_error(cls, engine: str, description: str) -> "Finding":
+    def engine_error(cls, engine: str, description: str) -> Finding:
         """A finding that marks an engine as having FAILED on this file.
 
         The ``engine_error`` meta flag lets the scanner treat the file as
@@ -88,6 +88,9 @@ class FileResult:
     findings: list[Finding] = field(default_factory=list)
     scanned: bool = False
     error: str | None = None
+    # Context that isn't a detection: executable format/architecture, code-
+    # signature status, archive walk statistics.
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def verdict(self) -> Severity:
@@ -127,10 +130,11 @@ class FileResult:
             "verdict": int(self.verdict),
             "verdict_label": self.verdict.label,
             "findings": [f.to_dict() for f in self.findings],
+            "meta": self.meta,
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "FileResult":
+    def from_dict(cls, d: dict[str, Any]) -> FileResult:
         return cls(
             path=d.get("path", ""),
             size=int(d.get("size", 0)),
@@ -138,6 +142,7 @@ class FileResult:
             findings=[Finding.from_dict(f) for f in d.get("findings", [])],
             scanned=bool(d.get("scanned", False)),
             error=d.get("error"),
+            meta=dict(d["meta"]) if isinstance(d.get("meta"), dict) else {},
         )
 
 
@@ -150,10 +155,25 @@ class ScanReport:
     finished: str | None = None
     files_scanned: int = 0
     files_skipped: int = 0
+    skipped_ext: int = 0          # skipped because of their extension (media/VM)
+    skipped_oversized: int = 0    # skipped deep scan because larger than max_scan_bytes
+    archives_opened: int = 0      # container files whose members were inspected
+    archive_members_scanned: int = 0
+    archive_members_skipped: int = 0   # encrypted, oversized, or past a safety limit
     bytes_scanned: int = 0
     errors: int = 0
     engines: list[str] = field(default_factory=list)
+    # Engines that did not take part, with the reason (e.g. "clamav": "not
+    # installed (optional)"). Not a failure - but the reader should know.
+    inactive_engines: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)  # e.g. an engine failed to load
+    # Things worth telling the user that do NOT make the scan incomplete
+    # (stale ClamAV signatures, online lookups suppressed by offline mode).
+    advisories: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)  # dirs/files we couldn't read
+    # Set when the scan ended before covering everything: "cancelled",
+    # "time limit reached" or "file limit reached".
+    stopped: str | None = None
     results: list[FileResult] = field(default_factory=list)
 
     @property
@@ -168,6 +188,32 @@ class ScanReport:
     @property
     def engine_errors(self) -> int:
         return sum(1 for r in self.results if r.errored)
+
+    @property
+    def coverage_complete(self) -> bool:
+        """False if any part of the scan couldn't be completed (unreadable paths,
+        read/stat errors, engine failures, or an engine that failed to load)."""
+        return not (self.unreadable or self.errors or self.engine_errors or self.warnings
+                    or self.stopped)
+
+    def coverage(self) -> dict[str, Any]:
+        """A machine-readable summary of what was and wasn't fully scanned."""
+        return {
+            "complete": self.coverage_complete,
+            "stopped": self.stopped,
+            "files_scanned": self.files_scanned,
+            "engines_active": self.engines,
+            "engines_inactive": self.inactive_engines,
+            "skipped_by_extension": self.skipped_ext,
+            "skipped_oversized": self.skipped_oversized,
+            "archives_opened": self.archives_opened,
+            "archive_members_scanned": self.archive_members_scanned,
+            "archive_members_skipped": self.archive_members_skipped,
+            "unreadable_paths": len(self.unreadable),
+            "read_or_stat_errors": self.errors,
+            "engine_errors": self.engine_errors,
+            "inactive_or_failed_engines": self.warnings,
+        }
 
     @property
     def duration_seconds(self) -> float | None:
@@ -191,10 +237,17 @@ class ScanReport:
             "duration_seconds": self.duration_seconds,
             "files_scanned": self.files_scanned,
             "files_skipped": self.files_skipped,
+            "skipped_ext": self.skipped_ext,
+            "skipped_oversized": self.skipped_oversized,
             "bytes_scanned": self.bytes_scanned,
             "errors": self.errors,
             "engines": self.engines,
+            "inactive_engines": self.inactive_engines,
             "warnings": self.warnings,
+            "advisories": self.advisories,
+            "stopped": self.stopped,
+            "unreadable": self.unreadable,
+            "coverage": self.coverage(),
             "counts_by_verdict": self.counts_by_verdict(),
             "threats": len(self.threats),
             "unknown": len(self.unknown),

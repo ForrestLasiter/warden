@@ -30,9 +30,12 @@ jobs:
           - os: ubuntu-24.04-arm
             bin: dist/warden
             asset: warden-linux-arm64
-          - os: macos-latest
+          - os: macos-latest          # Apple Silicon
             bin: dist/warden
             asset: warden-macos-arm64
+          - os: macos-15-intel        # Intel Macs
+            bin: dist/warden
+            asset: warden-macos-x64
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -58,8 +61,20 @@ jobs:
       - name: Smoke-test the binary
         shell: bash
         run: |
-          "${{ matrix.bin }}" version
-          "${{ matrix.bin }}" status
+          BIN="${{ matrix.bin }}"
+          "$BIN" version
+          "$BIN" status
+          # Offline + no telemetry by default, and the report renders.
+          "$BIN" --offline privacy --json > /dev/null
+          # The bundled crypto library loads (rule-pack signatures, quarantine encryption).
+          tmp="$(mktemp -d)"
+          "$BIN" rules keygen smoke --out "$tmp"
+          test -s "$tmp/smoke.pub"
+          # Executable parsing + signature lookup work on the binary itself.
+          "$BIN" inspect "$BIN" --json > /dev/null
+          # A clean file scans clean (exit 0) through every engine.
+          echo "hello" > "$tmp/clean.txt"
+          "$BIN" scan "$tmp/clean.txt"
 
       - name: Rename artifact
         shell: bash
@@ -80,27 +95,68 @@ jobs:
           files: out/${{ matrix.asset }}
           fail_on_unmatched_files: true
 
-  # Publish one SHA256SUMS covering every binary, so users (and the installers)
-  # can verify what they downloaded. Runs after all binaries are built.
+  # Checksums + Sigstore signature + SLSA provenance + SBOM, so users can verify
+  # exactly what they downloaded and that it was built by this workflow.
   checksums:
-    name: Publish checksums
+    name: Checksums, signatures & SBOM
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write        # attach assets to the release
+      id-token: write        # Sigstore keyless signing + provenance (OIDC)
+      attestations: write    # build provenance attestations
     steps:
       - name: Download all binaries
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
+
       - name: Generate SHA256SUMS
         run: |
           cd dist
           sha256sum warden-* | tee SHA256SUMS
-      - name: Attach checksums + notes to release
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+
+      - name: Sign SHA256SUMS (keyless)
+        run: |
+          cd dist
+          cosign sign-blob --yes \
+            --output-signature SHA256SUMS.sig \
+            --output-certificate SHA256SUMS.pem \
+            SHA256SUMS
+
+      - name: SLSA build provenance attestation
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: 'dist/warden-*'
+
+      - name: Generate SBOM (SPDX + CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/warden.spdx.json
+
+      - name: Generate SBOM (CycloneDX)
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: dist/warden.cdx.json
+
+      - name: Attach checksums, signatures, SBOM + notes to release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: dist/SHA256SUMS
+          files: |
+            dist/SHA256SUMS
+            dist/SHA256SUMS.sig
+            dist/SHA256SUMS.pem
+            dist/warden.spdx.json
+            dist/warden.cdx.json
           body: |
             Standalone Warden binaries — no Python needed.
 
@@ -111,7 +167,14 @@ jobs:
             | Linux ARM64 | `warden-linux-arm64` |
             | macOS (Apple Silicon) | `warden-macos-arm64` |
 
-            Verify your download against `SHA256SUMS` (the one-line installers do
-            this automatically). On Linux/macOS: `chmod +x warden-*` then run it.
-            On Windows, SmartScreen may warn about an unsigned binary the first
-            time. ClamAV is optional; YARA rules and heuristics work out of the box.
+            **Verify your download** — `SHA256SUMS` covers every binary (the
+            one-line installers check it automatically). The checksums file is
+            also **Sigstore-signed** (`SHA256SUMS.sig` + `SHA256SUMS.pem`) and the
+            binaries carry **SLSA build provenance**. See
+            [docs/VERIFY.md](https://github.com/ForrestLasiter/warden/blob/main/docs/VERIFY.md).
+            SBOMs: `warden.spdx.json`, `warden.cdx.json`.
+
+            On Linux/macOS: `chmod +x warden-*` then run it. On Windows,
+            SmartScreen may warn about an unsigned binary the first time (Warden
+            is not code-signed). ClamAV is optional; YARA rules and heuristics
+            work out of the box.

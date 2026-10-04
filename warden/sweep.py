@@ -6,6 +6,10 @@ the spots that matter for persistence and execution, then scans them:
   * Autoruns      - registry Run/RunOnce keys (HKCU + HKLM) and Startup folders
   * Processes     - the on-disk image of every running process
   * Scheduled     - executables referenced by Scheduled Tasks (Windows)
+  * Persistence   - Linux: systemd units, cron, XDG autostart, shell start-up
+                    files, init scripts, ld.so.preload. macOS: LaunchAgents /
+                    LaunchDaemons, login items, cron, periodic scripts.
+                    (see warden.persistence)
   * Temp          - %TEMP% and the Windows temp dir
   * Downloads     - the user's Downloads folder
 
@@ -31,9 +35,11 @@ try:
 except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
+from . import persistence as _persistence
+from . import signature as _signature
 from .config import Config
-from .models import Finding, FileResult, ScanReport, Severity, now_iso
-from .scanner import Scanner
+from .models import FileResult, Finding, ScanReport, Severity
+from .scanner import ScanLimits, Scanner
 
 IS_WINDOWS = os.name == "nt"
 
@@ -58,6 +64,7 @@ class SystemSweep:
     def __init__(self, config: Config | None = None, scanner: Scanner | None = None):
         self.config = config or Config.load()
         self.scanner = scanner or Scanner(self.config)
+        self._persistence_scan: _persistence.PersistenceScan | None = None
 
     # -- collection -------------------------------------------------------
     def collect(self, *, quick: bool = False) -> list[SweepCategory]:
@@ -66,6 +73,8 @@ class SystemSweep:
         cats.append(self._processes())
         if IS_WINDOWS:
             cats.append(self._scheduled_tasks())
+        else:
+            cats.append(self._persistence(quick=quick))
         cats.append(self._temp(quick=quick))
         cats.append(self._downloads(quick=quick))
         # Drop empties for a tidy report.
@@ -140,6 +149,14 @@ class SystemSweep:
                 cat.paths.append(exe)
         return cat
 
+    def _persistence(self, *, quick: bool) -> SweepCategory:
+        cat = SweepCategory(
+            "persistence",
+            "Start-up persistence (systemd, cron, launchd, login items, shell profiles)")
+        self._persistence_scan = _persistence.collect(full=not quick)
+        cat.paths = [p for p in self._persistence_scan.files() if p.is_file()]
+        return cat
+
     def _temp(self, *, quick: bool) -> SweepCategory:
         cat = SweepCategory("temp", "Temp directories")
         dirs = []
@@ -166,6 +183,7 @@ class SystemSweep:
         *,
         quick: bool = False,
         progress: Callable[[FileResult], None] | None = None,
+        limits: ScanLimits | None = None,
     ) -> tuple[ScanReport, list[SweepCategory]]:
         categories = self.collect(quick=quick)
         # Flatten unique paths, remembering category membership for the report.
@@ -178,7 +196,7 @@ class SystemSweep:
                     cat_of[key] = cat.name
                     all_paths.append(p)
 
-        report = self.scanner.scan_files(all_paths, progress=progress)
+        report = self.scanner.scan_files(all_paths, progress=progress, limits=limits)
         report.root = "<system-sweep>"
 
         # Location heuristic + tag each result with its sweep category.
@@ -187,7 +205,43 @@ class SystemSweep:
             category = cat_of.get(result_key, "other")
             # stash category in the worst finding's meta, or as a note
             self._augment_location(result, category)
+        self._apply_persistence(report)
         return report, categories
+
+    def _apply_persistence(self, report: ScanReport) -> None:
+        """Judge each persistence registration on what it launches, and attach
+        the verdict to the file that defines it."""
+        scan = self._persistence_scan
+        if scan is None:
+            return
+        # Locations we could not read (often root-only) are a coverage gap.
+        report.unreadable.extend(scan.unreadable)
+        by_path = {str(Path(r.path)): r for r in report.results}
+        texts: dict[str, str | None] = {}
+        for item in scan.items:
+            src = item.source_path
+            if src is None:
+                # No file behind it (the user crontab): scan the text in memory.
+                result = by_path.get(item.source)
+                if result is None:
+                    result = self.scanner.scan_bytes(item.source, item.text.encode("utf-8", "replace"))
+                    by_path[item.source] = result
+                    report.results.append(result)
+                    report.files_scanned += 1
+                text: str | None = item.text
+            else:
+                result = by_path.get(str(src))
+                if result is None:
+                    continue
+                if str(src) not in texts:
+                    texts[str(src)] = _read_text(src)
+                text = texts[str(src)]
+            known = {(f.name, f.meta.get("command"), f.meta.get("path")) for f in result.findings}
+            for finding in _persistence.assess(item, text):
+                key = (finding.name, finding.meta.get("command"), finding.meta.get("path"))
+                if key not in known:
+                    known.add(key)
+                    result.findings.append(finding)
 
     def _augment_location(self, result: FileResult, category: str) -> None:
         path = Path(result.path)
@@ -206,9 +260,18 @@ class SystemSweep:
                     ),
                     meta={"category": category, "signed": False},
                 ))
+                result.meta.setdefault("signature", _signature.signature_info(path))
 
 
 # -- helpers -------------------------------------------------------------
+def _read_text(path: Path, limit: int = 256 * 1024) -> str | None:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(limit).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _collect_files(dirs: list[Path], *, quick: bool, exe_only: bool) -> list[Path]:
     out: list[Path] = []
     max_files = 500 if quick else 5000
@@ -235,7 +298,7 @@ def _collect_files(dirs: list[Path], *, quick: bool, exe_only: bool) -> list[Pat
 
 def _registry_autorun_executables() -> list[Path]:
     """Read Run/RunOnce values and extract the referenced executable paths."""
-    if not IS_WINDOWS:
+    if sys.platform != "win32":
         return []
     try:
         import winreg
@@ -329,7 +392,9 @@ _INTERPRETERS = {
 
 def _split_command(command: str) -> list[str]:
     """Split a command line on whitespace, respecting double-quoted spans."""
-    toks, cur, quoted = [], [], False
+    toks: list[str] = []
+    cur: list[str] = []
+    quoted = False
     for ch in command:
         if ch == '"':
             quoted = not quoted
@@ -391,15 +456,8 @@ _SIGN_CACHE: dict[str, bool | None] = {}
 
 
 def _powershell_exe() -> str:
-    """Absolute path to the system PowerShell.
-
-    SECURITY: invoking it by bare name would let Windows' executable search
-    order run a `powershell.exe` planted in the current directory (which the
-    sweep is often launched from, e.g. Downloads). Resolve the trusted copy.
-    """
-    root = os.environ.get("SystemRoot") or r"C:\Windows"
-    p = os.path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    return p if os.path.isfile(p) else "powershell"
+    """Absolute path to the system PowerShell (see warden.signature)."""
+    return _signature.powershell_exe()
 
 
 def _is_signed(path: Path) -> bool | None:
@@ -412,27 +470,15 @@ def _is_signed(path: Path) -> bool | None:
     key = str(path)
     if key in _SIGN_CACHE:
         return _SIGN_CACHE[key]
-    try:
-        # SECURITY: never interpolate the path into the PowerShell script. A
-        # filename containing a single quote would otherwise break out of the
-        # string literal and execute arbitrary code (an attacker can drop such a
-        # file into Temp/Downloads, which this sweep enumerates). Pass the path
-        # out-of-band via an environment variable, which cannot be parsed as code.
-        proc = subprocess.run(
-            [_powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
-             "(Get-AuthenticodeSignature -LiteralPath $env:WARDEN_SIGPATH).Status"],
-            capture_output=True, text=True, timeout=20,
-            env={**os.environ, "WARDEN_SIGPATH": str(path)},
-        )
-        status = proc.stdout.strip()
-        result: bool | None
-        if status == "Valid":
-            result = True
-        elif status in ("NotSigned", "HashMismatch", "NotTrusted", "UnknownError"):
-            result = False
-        else:
-            result = None
-    except (OSError, subprocess.TimeoutExpired):
+    # The path is passed to PowerShell out-of-band (environment variable), never
+    # interpolated into the script: see warden.signature.authenticode_info.
+    status = _signature.authenticode_info(path).get("status")
+    result: bool | None
+    if status == "valid":
+        result = True
+    elif status in ("unsigned", "invalid", "untrusted"):
+        result = False
+    else:
         result = None
     _SIGN_CACHE[key] = result
     return result

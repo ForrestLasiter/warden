@@ -7,16 +7,24 @@ from warden.sweep import _extract_exe_path
 def test_config_save_load_roundtrip(tmp_path):
     cfg = Config(data_dir=tmp_path)
     cfg.online_hash_lookup = True
-    cfg.virustotal_api_key = "test-key-1234"
     cfg.use_clamav = False
     cfg.max_scan_bytes = 5_000_000        # within [MIN_SCAN_BYTES, MAX_SCAN_BYTES]
     cfg.save()
 
     loaded = Config.load(tmp_path)
     assert loaded.online_hash_lookup is True
-    assert loaded.virustotal_api_key == "test-key-1234"
     assert loaded.use_clamav is False
     assert loaded.max_scan_bytes == 5_000_000
+
+
+def test_config_save_does_not_write_vt_key(tmp_path):
+    """The VirusTotal key must never be persisted in config.json (plaintext)."""
+    import json
+    cfg = Config(data_dir=tmp_path)
+    cfg.virustotal_api_key = "leftover-plaintext-key"
+    cfg.save()
+    on_disk = json.loads((tmp_path / "config.json").read_text())
+    assert "virustotal_api_key" not in on_disk
 
 
 def test_config_defaults_when_missing(tmp_path):
