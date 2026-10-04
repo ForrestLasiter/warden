@@ -62,8 +62,12 @@ try:
         Ed25519PublicKey,
     )
     _CRYPTO = True
-except Exception:  # pragma: no cover - cryptography is a declared dependency
+    _CRYPTO_ERROR = ""
+except Exception as _exc:  # pragma: no cover - cryptography is a declared dependency
     _CRYPTO = False
+    # Keep the reason: "is it missing, or did it fail to load?" is the first
+    # question when this is hit inside a packaged build.
+    _CRYPTO_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 FORMAT = 1
 _DOMAIN = b"warden-rulepack-v1\n"
@@ -99,7 +103,8 @@ class PackInfo:
 # -- keys ----------------------------------------------------------------
 def _need_crypto() -> None:
     if not _CRYPTO:
-        raise RulePackError("the 'cryptography' package is required for rule-pack signatures")
+        raise RulePackError("the 'cryptography' package is required for rule-pack signatures"
+                            + (f" (it failed to load: {_CRYPTO_ERROR})" if _CRYPTO_ERROR else ""))
 
 
 def key_id(public_key: bytes) -> str:

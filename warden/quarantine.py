@@ -73,8 +73,12 @@ try:
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
     _CRYPTO = True
-except Exception:  # pragma: no cover - cryptography is a declared dependency
+    _CRYPTO_ERROR = ""
+except Exception as _exc:  # pragma: no cover - cryptography is a declared dependency
     _CRYPTO = False
+    # Keep the reason: "is it missing, or did it fail to load?" is the first
+    # question when this is hit inside a packaged build.
+    _CRYPTO_ERROR = f"{type(_exc).__name__}: {_exc}"
 
 
 @dataclass(slots=True)
@@ -685,7 +689,8 @@ def _xor_copy_atomic(src: Path, dst: Path, *, key: int = _XOR_KEY, mode: int | N
 # cannot be reordered, dropped, duplicated or truncated without detection.
 def _need_crypto() -> None:
     if not _CRYPTO:
-        raise QuarantineError("the 'cryptography' package is required for quarantine encryption")
+        raise QuarantineError("the 'cryptography' package is required for quarantine encryption"
+                              + (f" (it failed to load: {_CRYPTO_ERROR})" if _CRYPTO_ERROR else ""))
 
 
 def _master_key(*, create: bool) -> bytes:
