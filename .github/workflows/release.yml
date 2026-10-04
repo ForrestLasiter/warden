@@ -30,9 +30,12 @@ jobs:
           - os: ubuntu-24.04-arm
             bin: dist/warden
             asset: warden-linux-arm64
-          - os: macos-latest
+          - os: macos-latest          # Apple Silicon
             bin: dist/warden
             asset: warden-macos-arm64
+          - os: macos-15-intel        # Intel Macs
+            bin: dist/warden
+            asset: warden-macos-x64
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -58,8 +61,20 @@ jobs:
       - name: Smoke-test the binary
         shell: bash
         run: |
-          "${{ matrix.bin }}" version
-          "${{ matrix.bin }}" status
+          BIN="${{ matrix.bin }}"
+          "$BIN" version
+          "$BIN" status
+          # Offline + no telemetry by default, and the report renders.
+          "$BIN" --offline privacy --json > /dev/null
+          # The bundled crypto library loads (rule-pack signatures, quarantine encryption).
+          tmp="$(mktemp -d)"
+          "$BIN" rules keygen smoke --out "$tmp"
+          test -s "$tmp/smoke.pub"
+          # Executable parsing + signature lookup work on the binary itself.
+          "$BIN" inspect "$BIN" --json > /dev/null
+          # A clean file scans clean (exit 0) through every engine.
+          echo "hello" > "$tmp/clean.txt"
+          "$BIN" scan "$tmp/clean.txt"
 
       - name: Rename artifact
         shell: bash

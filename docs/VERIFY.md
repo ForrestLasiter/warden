@@ -11,6 +11,13 @@ Every Warden release publishes, alongside the binaries:
 
 Binaries also carry **SLSA build provenance** attestations recorded on GitHub.
 
+Binaries: `warden-windows-x64.exe`, `warden-linux-x64`, `warden-linux-arm64`,
+`warden-macos-arm64` (Apple Silicon), `warden-macos-x64` (Intel).
+
+> Warden's binaries are **not** Authenticode-signed or Apple-notarized (that
+> needs paid certificates). The checks below are how you establish that a
+> download is genuine.
+
 The one-line installers verify `SHA256SUMS` automatically and **fail closed** if
 it can't be checked. The steps below are for verifying a manual download.
 

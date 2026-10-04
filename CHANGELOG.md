@@ -6,6 +6,114 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-04
+
+A hardening and capability release. Existing commands and options keep working;
+everything below is additive unless marked **Changed**.
+
+### Added — detection
+- **Archive scanning.** zip (and jar/docx/apk…), tar, tar.gz/bz2/xz, gzip, bzip2
+  and xz are opened **in memory** (nothing is extracted to disk), nested up to
+  three levels, with hard limits on members, member size, total size and
+  compression ratio. Decompression bombs, encrypted members and partially
+  inspected archives are reported. `--no-archives` / `scan_archives` to disable.
+- **Document inspection** (new `documents` engine): Office macros in legacy
+  (OLE) and modern (OOXML) files — VBA source is located and decompressed, and
+  auto-run macros that launch programs or download are flagged — plus macro in a
+  macro-free extension, remote-template injection, PDF JavaScript / launch
+  actions / embedded files, and RTF embedded/Equation-Editor objects.
+- **Executable metadata for PE, ELF and Mach-O** (format, architecture, type,
+  sections, import hash, embedded signature) attached to results, with new
+  structural heuristics (writable+executable sections/segments, section-less or
+  UPX-packed ELF, unsigned Apple-Silicon Mach-O).
+- **Publisher signature status** (Authenticode on Windows, `codesign` on macOS)
+  shown for flagged executables.
+- **Linux and macOS persistence detection in the sweep:** systemd units, cron,
+  XDG autostart, shell start-up files, init scripts, `ld.so.preload`;
+  LaunchAgents/LaunchDaemons, login items, periodic scripts. Entries are judged
+  on what they launch (download-and-run, reverse shells, world-writable or hidden
+  targets, library injection).
+- **ClamAV signature freshness:** database version and age in `warden status`,
+  with a warning when it is missing or more than 7 days old.
+- `warden inspect <file>` — hashes, format, signature and archive listing.
+
+### Added — rule packs
+- **Signed, versioned rule packs with rollback** (`warden rules …`): Ed25519
+  signatures checked against a trust store you control, manifest hash and
+  member-name validation, compile check before activation, downgrade refusal,
+  atomic activation, `rollback`, and re-verification of installed files on every
+  scan. See `docs/RULE_PACKS.md`.
+
+### Added — quarantine
+- **Restore verifies content** against the hash recorded at quarantine time and
+  can no longer clobber a file that appears mid-restore.
+- **Re-scan before restore:** `quarantine restore --rescan`, `quarantine rescan
+  [--all]`; the dashboard always re-scans and asks again if still detected.
+- `quarantine purge` (by age, retention setting, restored, or all; dry-run and
+  confirmation), `quarantine export` / `import` (portable bundles whose payload
+  stays neutralized; optional password).
+- **Optional authenticated encryption** of quarantined files (AES-256-GCM,
+  `quarantine_encryption`), key in the OS secret store.
+
+### Added — privacy and control
+- **Offline mode:** `--offline`, `WARDEN_OFFLINE=1` or `offline: true` block every
+  network request before a connection is opened.
+- **`warden privacy`:** what is stored locally, what can be sent and to whom, how
+  to erase it.
+- The VirusTotal API key is stored in the OS secret store (DPAPI / Keychain /
+  libsecret) instead of plaintext in `config.json`.
+- Scans can be **cancelled** (Ctrl+C once, or the dashboard's Cancel button) and
+  bounded (`--timeout`, `--max-files`).
+- `warden schedule doctor` — checks that scheduled scans will really run.
+
+### Added — dashboard
+- Strict Content-Security-Policy and hardening headers; cross-origin requests
+  refused; non-loopback bind refused; the page states it is local-only.
+- Cancel button, per-job time and file limits, race-free concurrency cap,
+  bounded result memory.
+- **Quit Warden** button (stops the server).
+- Incomplete scans are shown as incomplete (not "No threats found"), with the
+  reasons; file type and signature shown for flagged files.
+
+### Added — release and quality
+- **Intel macOS binary** (`warden-macos-x64`); Windows on ARM handled by the
+  installer (x64 build under emulation).
+- Releases carry a **Sigstore signature**, **SLSA build provenance** and
+  **SBOMs** (SPDX + CycloneDX); release tags are protected. `docs/VERIFY.md`.
+- Installers **fail closed** when the download cannot be verified, and accept
+  options (install dir, version, no shortcuts, no PATH change, uninstall).
+- CI: ruff, mypy (linux/win32/darwin), bandit, pip-audit, ShellCheck,
+  PSScriptAnalyzer, coverage floor; Python 3.10–3.14; Linux x64/ARM64, Windows,
+  macOS Apple Silicon and Intel.
+- Property-based fuzz tests for every parser and state-file loader.
+- New docs: threat model, privacy, rule packs, releasing.
+
+### Changed
+- **Exit code `2` now also covers incomplete coverage**: unreadable paths, a
+  rule pack that fails its integrity check, and cancelled / timed-out scans —
+  not only engine errors. Scripts that treat any non-zero code as "attention
+  needed" are unaffected.
+- Symlinks are reported and skipped (unless `follow_symlinks` is on) instead of
+  being silently ignored; directory walks detect cycles.
+- Dashboard job reports list only flagged or errored files (the full report is
+  still saved to history).
+- New dependency: `cryptography` (rule-pack signatures, quarantine encryption).
+
+### Fixed
+- A file or archive-member name containing Rich markup or terminal control
+  characters could crash report rendering or inject escape sequences.
+- Corrupted state files (schedule registry, quarantine index, history reports,
+  reputation cache) holding unexpected JSON types could crash commands; all are
+  now validated on load. Schedule entries are fully re-validated before they are
+  handed to the OS scheduler.
+- The dashboard's sweep ignored the "check hashes online" option.
+- Quarantine/history IDs were truncated in narrow terminals.
+
+### Not done (by choice)
+- **No paid code signing or notarization.** Binaries remain unsigned for Windows
+  SmartScreen / macOS Gatekeeper; verification is by checksum, Sigstore and
+  provenance instead.
+
 ## [0.4.5] - 2026-09-28
 
 ### Added
@@ -195,7 +303,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ForrestLasiter/warden/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ForrestLasiter/warden/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ForrestLasiter/warden/compare/v0.4.2...v0.4.3

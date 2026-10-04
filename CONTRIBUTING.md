@@ -26,13 +26,31 @@ pytest -q
 ```
 
 Warden targets **Python 3.10+** and depends only on `yara-x`, `typer`, `rich`,
-`pefile`, `psutil`, and `httpx`. The dashboard uses the standard library only —
-please don't add a web framework.
+`pefile`, `psutil`, `httpx`, and `cryptography`. The dashboard uses the standard
+library only — please don't add a web framework.
 
 ## Before you open a pull request
 
-- `pytest -q` passes.
-- New behavior has a test where practical (see `tests/`).
+Run what CI runs:
+
+```bash
+ruff check .
+mypy --platform linux warden && mypy --platform win32 warden && mypy --platform darwin warden
+bandit -q -r warden -c pyproject.toml
+pytest -q --cov
+```
+
+- All of the above pass.
+- New behavior has a test (see `tests/`). Anything that parses untrusted input —
+  a file format, a state file, a request — also gets a property test in
+  `tests/test_fuzz.py` asserting it never raises and stays within its bounds.
+- **Fail closed.** If something can't be checked, the scan must say so
+  (`unknown` / incomplete, exit 2) — never report clean.
+- **No new network calls** outside `warden/net.py`, and none that happen without
+  the user opting in. No telemetry, ever.
+- Don't shell out with a shell, and never put a file name into a command string.
+- Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) if your change touches the
+  scanner, quarantine, dashboard, scheduler, rule packs or the release pipeline.
 - YARA rule changes: verify they don't fire on large legitimate binaries. The
   command/script rules are guarded with `filesize < 2MB` for exactly this reason.
 - Keep the CLI and dashboard in sync when you add a capability to the core.
@@ -42,7 +60,9 @@ please don't add a web framework.
 
 The dashboard targets **WCAG 2.1 AA**. If you touch the UI, preserve keyboard
 navigation, focus visibility, ARIA roles/live-regions, color contrast in both
-themes, and `prefers-reduced-motion`.
+themes, and `prefers-reduced-motion`. The page runs under a strict
+Content-Security-Policy: no inline scripts, styles or event handlers, and
+untrusted text goes in with `textContent`, never `innerHTML`.
 
 ## Commit messages
 

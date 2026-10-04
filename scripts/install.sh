@@ -71,7 +71,7 @@ case "$OS" in
   Darwin)
     case "$ARCH" in
       arm64|aarch64) ASSET="warden-macos-arm64" ;;
-      x86_64) echo "Only Apple Silicon binaries are published. On Intel Macs, build from source: https://github.com/$REPO#install-dev" >&2; exit 1 ;;
+      x86_64) ASSET="warden-macos-x64" ;;
       *) echo "Unsupported macOS arch '$ARCH'." >&2; exit 1 ;;
     esac ;;
   *)

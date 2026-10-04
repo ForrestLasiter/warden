@@ -30,6 +30,17 @@ $ErrorActionPreference = 'Stop'
 $repo = 'ForrestLasiter/warden'
 $asset = 'warden-windows-x64.exe'
 
+# One Windows build is published (x64). Windows on ARM runs it through the
+# built-in x64 emulation; 32-bit Windows is not supported.
+$arch = $env:PROCESSOR_ARCHITEW6432
+if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+if ($arch -eq 'x86') {
+    throw "Warden needs 64-bit Windows. See https://github.com/$repo#install-dev to run from source."
+}
+if ($arch -eq 'ARM64') {
+    Write-Host "Windows on ARM detected: installing the x64 build (runs under Windows' built-in emulation)." -ForegroundColor Yellow
+}
+
 # Environment-variable fallbacks (for the `irm | iex` case, which can't take params).
 if (-not $InstallDir -and $env:WARDEN_INSTALL_DIR) { $InstallDir = $env:WARDEN_INSTALL_DIR }
 if ($env:WARDEN_VERSION)          { $Version = $env:WARDEN_VERSION }

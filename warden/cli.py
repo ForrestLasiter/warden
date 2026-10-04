@@ -428,10 +428,11 @@ def quarantine_list():
         console.print("[dim]Quarantine is empty.[/]")
         return
     table = Table(title="Quarantined files")
-    table.add_column("ID", style="bold")
+    # The ID is what the user types back: never truncate it.
+    table.add_column("ID", style="bold", no_wrap=True, min_width=16)
     table.add_column("Verdict")
-    table.add_column("When")
-    table.add_column("Original path")
+    table.add_column("When", no_wrap=True)
+    table.add_column("Original path", overflow="fold")
     table.add_column("Status")
     table.add_column("Last re-scan")
     for e in entries:
@@ -1063,7 +1064,7 @@ def history_list(
         console.print("[dim]No history yet. Run a scan/sweep with --save.[/]")
         return
     table = Table(title="Scan history")
-    table.add_column("ID", style="bold")
+    table.add_column("ID", style="bold", no_wrap=True, min_width=27)
     table.add_column("Kind")
     table.add_column("When (UTC)")
     table.add_column("Files", justify="right")
