@@ -13,9 +13,10 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 _IS_WINDOWS = os.name == "nt"
 
@@ -50,11 +51,11 @@ def _acquire(fd: int, timeout: float) -> None:
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # type: ignore[attr-defined]
             return
         except OSError:
             if time.monotonic() >= deadline:
-                raise TimeoutError("could not acquire Warden state lock in time")
+                raise TimeoutError("could not acquire Warden state lock in time") from None
             time.sleep(0.05)
 
 
@@ -66,7 +67,7 @@ def _release(fd: int) -> None:
             msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[attr-defined]
     except OSError:
         pass
 

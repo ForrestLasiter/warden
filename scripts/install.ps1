@@ -71,7 +71,7 @@ Write-Host "Downloading $asset ($Version)..."
 Invoke-WebRequest -Uri "$base/$asset" -OutFile $tmp -UseBasicParsing
 
 # --- verify (fail closed) ---------------------------------------------------
-function Fail-Closed([string] $msg) {
+function Stop-Unverified([string] $msg) {
     if ($AllowUnverified) {
         Write-Warning "$msg (continuing because -AllowUnverified was given)."
     } else {
@@ -83,14 +83,14 @@ $sums = $null
 try {
     $sums = (Invoke-WebRequest -Uri "$base/SHA256SUMS" -UseBasicParsing).Content
 } catch {
-    Fail-Closed "Could not download SHA256SUMS to verify the binary"
+    Stop-Unverified "Could not download SHA256SUMS to verify the binary"
 }
 if ($sums) {
     $line = ($sums -split "`n" | Where-Object { $_ -match [regex]::Escape($asset) } | Select-Object -First 1)
     $expected = if ($line) { ($line -split '\s+')[0].ToLower() } else { $null }
     $actual = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
     if (-not $expected) {
-        Fail-Closed "SHA256SUMS does not list $asset"
+        Stop-Unverified "SHA256SUMS does not list $asset"
     } elseif ($expected -ne $actual) {
         Remove-Item $tmp -Force -ErrorAction SilentlyContinue
         throw "Checksum MISMATCH for $asset (expected $expected, got $actual). The download may be corrupt or tampered with. Aborting."

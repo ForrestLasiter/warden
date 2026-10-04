@@ -166,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
         the page (and its token) or the API to a foreign origin.
         """
         host = (self.headers.get("Host") or "").strip().lower()
-        port = self.server.server_address[1]
+        port = self.server.server_address[1]  # type: ignore[index]
         allowed = {
             f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}",
         }
@@ -246,8 +246,8 @@ class Handler(BaseHTTPRequestHandler):
             data = History().load(entry_id)
             return self._send_json(data or {"error": "not found"}, 200 if data else 404)
         if path == "/api/quarantine":
-            entries = Quarantine().list_entries()
-            return self._send_json({"entries": [e.to_dict() for e in entries]})
+            q_entries = Quarantine().list_entries()
+            return self._send_json({"entries": [e.to_dict() for e in q_entries]})
         if path.startswith("/api/job/"):
             job = JOBS.get(path[len("/api/job/"):])
             return self._send_json(job or {"error": "not found"}, 200 if job else 404)

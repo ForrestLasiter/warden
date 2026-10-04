@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,7 +31,7 @@ except Exception:  # pragma: no cover
     psutil = None  # type: ignore
 
 from .config import Config
-from .models import Finding, FileResult, ScanReport, Severity, now_iso
+from .models import FileResult, Finding, ScanReport, Severity
 from .scanner import Scanner
 
 IS_WINDOWS = os.name == "nt"
@@ -329,7 +328,9 @@ _INTERPRETERS = {
 
 def _split_command(command: str) -> list[str]:
     """Split a command line on whitespace, respecting double-quoted spans."""
-    toks, cur, quoted = [], [], False
+    toks: list[str] = []
+    cur: list[str] = []
+    quoted = False
     for ch in command:
         if ch == '"':
             quoted = not quoted

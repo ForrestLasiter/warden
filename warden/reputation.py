@@ -21,7 +21,6 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 try:
@@ -110,6 +109,7 @@ class OnlineReputation:
         if key in self._mem:
             return self._mem[key]
         cached = self._cache.get(key)
+        res: ReputationResult | None
         if cached and not _cache_expired(cached):
             res = ReputationResult(
                 known=bool(cached.get("known")),

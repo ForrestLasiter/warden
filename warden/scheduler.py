@@ -22,8 +22,7 @@ import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass, asdict, field
-from pathlib import Path
+from dataclasses import asdict, dataclass
 
 from .config import Config
 from .models import Severity
@@ -130,7 +129,7 @@ class Scheduler:
         try:
             Severity.parse(spec.min_severity)
         except (KeyError, ValueError):
-            raise SchedulerError(f"invalid min-severity: {spec.min_severity!r}")
+            raise SchedulerError(f"invalid min-severity: {spec.min_severity!r}") from None
         if spec.kind == "scan":
             if not spec.target:
                 raise SchedulerError("scan schedules need a --target path")
@@ -185,7 +184,7 @@ def _validate_time(t: str) -> None:
         if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
             raise ValueError
     except (ValueError, AttributeError):
-        raise SchedulerError(f"time must be HH:MM (24h), got {t!r}")
+        raise SchedulerError(f"time must be HH:MM (24h), got {t!r}") from None
 
 
 # -- Windows (schtasks) --------------------------------------------------

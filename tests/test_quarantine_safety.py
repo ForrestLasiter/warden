@@ -1,7 +1,6 @@
 """Safety/durability tests for quarantine: no data loss, no arbitrary write."""
 
 import hashlib
-import json
 
 import pytest
 

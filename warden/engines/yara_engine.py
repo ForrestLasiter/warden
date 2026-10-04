@@ -9,6 +9,7 @@ MEDIUM), so rule authors control how loud a match is.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 try:
     import yara_x
@@ -27,7 +28,7 @@ class YaraEngine:
     name = "yara"
 
     def __init__(self, rule_dirs: list[Path]):
-        self._rules = None
+        self._rules: Any = None
         self._rule_count = 0
         self._load_error: str | None = _YARA_IMPORT_ERROR
         self._compile_warnings: list[str] = []
@@ -53,9 +54,9 @@ class YaraEngine:
             compiler = yara_x.Compiler()
             # Don't let one broken rule file sink the whole set.
             try:
-                compiler.ignore_invalid_rules(True)
+                compiler.ignore_invalid_rules(True)  # type: ignore[call-arg]
             except TypeError:
-                compiler.ignore_invalid_rules()
+                compiler.ignore_invalid_rules()  # type: ignore[call-arg]
             for origin, text in sources:
                 try:
                     compiler.add_source(text, origin=origin)

@@ -5,10 +5,9 @@ from pathlib import Path
 
 from warden.config import BUNDLED_RULES_DIR
 from warden.engines.base import ScanContext
-from warden.engines.yara_engine import YaraEngine
 from warden.engines.heuristics import HeuristicsEngine
+from warden.engines.yara_engine import YaraEngine
 from warden.models import Severity
-
 
 # EICAR built at runtime so this source file itself isn't flagged by scanners.
 EICAR = (
@@ -80,6 +79,7 @@ def test_clean_file_has_no_findings():
 
 def test_scancontext_sha1_and_sha256(tmp_path):
     import hashlib
+
     from warden.engines.base import ScanContext
     data = b"warden hashing test"
     f = tmp_path / "x.bin"

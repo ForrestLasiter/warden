@@ -61,12 +61,14 @@ class ScanContext:
             buf = self.data()
             if self._read_error is None:
                 self._sha256 = hashlib.sha256(buf).hexdigest()
-                self._sha1 = hashlib.sha1(buf).hexdigest()
+                # SHA-1 is only a lookup key for the Team Cymru registry, not a
+                # security/integrity check.
+                self._sha1 = hashlib.sha1(buf, usedforsecurity=False).hexdigest()
         else:
             # Too large to buffer: stream the whole file for a true full-file
             # hash. Content engines see only the first max_read bytes (data()).
             s256 = hashlib.sha256()
-            s1 = hashlib.sha1()
+            s1 = hashlib.sha1(usedforsecurity=False)  # Cymru lookup key, not security
             try:
                 with open(self.path, "rb") as fh:
                     for chunk in iter(lambda: fh.read(1024 * 1024), b""):

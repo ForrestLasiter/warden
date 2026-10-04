@@ -9,7 +9,7 @@ the GUI, and stored history.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,7 +30,7 @@ class Severity(enum.IntEnum):
         return self.name.capitalize()
 
     @classmethod
-    def parse(cls, value: str | int | "Severity") -> "Severity":
+    def parse(cls, value: str | int | Severity) -> Severity:
         if isinstance(value, Severity):
             return value
         if isinstance(value, int):
@@ -56,7 +56,7 @@ class Finding:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "Finding":
+    def from_dict(cls, d: dict[str, Any]) -> Finding:
         return cls(
             engine=d.get("engine", "?"),
             name=d.get("name", "?"),
@@ -66,7 +66,7 @@ class Finding:
         )
 
     @classmethod
-    def engine_error(cls, engine: str, description: str) -> "Finding":
+    def engine_error(cls, engine: str, description: str) -> Finding:
         """A finding that marks an engine as having FAILED on this file.
 
         The ``engine_error`` meta flag lets the scanner treat the file as
@@ -130,7 +130,7 @@ class FileResult:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "FileResult":
+    def from_dict(cls, d: dict[str, Any]) -> FileResult:
         return cls(
             path=d.get("path", ""),
             size=int(d.get("size", 0)),

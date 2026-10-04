@@ -7,7 +7,7 @@ defaults. Nothing here requires the file to exist.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import default_data_dir
@@ -93,7 +93,7 @@ class Config:
 
     # Persistence ---------------------------------------------------------
     @classmethod
-    def load(cls, data_dir: Path | None = None) -> "Config":
+    def load(cls, data_dir: Path | None = None) -> Config:
         cfg = cls(data_dir=data_dir or default_data_dir())
         path = cfg.config_path
         if not path.exists():

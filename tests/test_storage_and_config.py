@@ -6,7 +6,7 @@ import os
 import pytest
 
 from warden import storage
-from warden.config import Config, DEFAULT_MAX_SCAN_BYTES, MAX_SCAN_BYTES, MIN_SCAN_BYTES
+from warden.config import DEFAULT_MAX_SCAN_BYTES, MAX_SCAN_BYTES, MIN_SCAN_BYTES, Config
 
 
 def test_atomic_write_replaces_completely(tmp_path):
@@ -72,6 +72,7 @@ def test_string_booleans_are_coerced(tmp_path):
 def test_file_lock_is_exclusive(tmp_path):
     import threading
     import time
+
     from warden import storage
     lock = tmp_path / "x.lock"
     order = []

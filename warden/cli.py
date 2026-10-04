@@ -15,22 +15,21 @@ import json as _json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.table import Table
 
 from . import __version__
 from .config import Config
-from .models import FileResult, Severity, ScanReport
-from .scanner import Scanner
-from .quarantine import Quarantine, QuarantineError
-from .sweep import SystemSweep
 from .history import History
-from .scheduler import Scheduler, ScheduleSpec, SchedulerError
+from .models import FileResult, ScanReport, Severity
+from .quarantine import Quarantine, QuarantineError
+from .scanner import Scanner
+from .scheduler import Scheduler, SchedulerError, ScheduleSpec
+from .sweep import SystemSweep
 
 app = typer.Typer(
     add_completion=False,
@@ -95,7 +94,7 @@ def scan(
     recursive: bool = typer.Option(True, "--recursive/--no-recursive", "-r", help="Recurse into subfolders."),
     quarantine: bool = typer.Option(False, "--quarantine", "-q", help="Offer to isolate flagged files."),
     min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level (clean/info/low/medium/high/critical)."),
-    json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
+    json_out: str | None = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     quiet: bool = typer.Option(False, "--quiet", help="Only print the summary and threats."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
     online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
@@ -166,7 +165,7 @@ def sweep(
     quick: bool = typer.Option(False, "--quick", help="Faster: top-level temp/downloads + executables only."),
     quarantine: bool = typer.Option(False, "--quarantine", "-q", help="Offer to isolate flagged files."),
     min_severity: str = typer.Option("low", "--min-severity", help="Only report findings at/above this level."),
-    json_out: Optional[str] = typer.Option(None, "--json", help="Write full report as JSON to this path."),
+    json_out: str | None = typer.Option(None, "--json", help="Write full report as JSON to this path."),
     save: bool = typer.Option(False, "--save", help="Save this report to scan history (~/.warden/history)."),
     online: bool = typer.Option(False, "--online", help="Also check file hashes against online reputation (opt-in)."),
 ):
@@ -341,7 +340,7 @@ def quarantine_list():
 @quarantine_app.command("restore")
 def quarantine_restore(
     entry_id: str = typer.Argument(..., help="Quarantine entry ID (from 'quarantine list')."),
-    dest: Optional[str] = typer.Option(None, "--to", help="Restore to this path instead of the original."),
+    dest: str | None = typer.Option(None, "--to", help="Restore to this path instead of the original."),
 ):
     """Restore a quarantined file."""
     q = Quarantine()
@@ -375,8 +374,8 @@ def lookup(
     target: str = typer.Argument(..., help="A file path, or a SHA-256 / SHA-1 hash."),
 ):
     """Check a file or hash against online reputation (Team Cymru / VirusTotal)."""
-    from .reputation import OnlineReputation
     from .engines.base import ScanContext
+    from .reputation import OnlineReputation
 
     cfg = Config.load()
     cfg.online_hash_lookup = True
@@ -583,6 +582,7 @@ _SECRET_FIELDS: set[str] = set()
 def _resolve_vt_key() -> tuple[str, str]:
     """Return (key, source) resolving env -> secret store -> legacy config."""
     import os as _os
+
     from . import secrets as _secrets
     if _os.environ.get("WARDEN_VT_API_KEY"):
         return _os.environ["WARDEN_VT_API_KEY"], "environment"
@@ -678,7 +678,7 @@ def config_unset(key: str = typer.Argument(..., help="Setting name to clear/rese
 
 @config_app.command("set-vt-key")
 def config_set_vt_key(
-    key: Optional[str] = typer.Argument(None, help="VirusTotal API key. Omit to be prompted (hidden)."),
+    key: str | None = typer.Argument(None, help="VirusTotal API key. Omit to be prompted (hidden)."),
     enable: bool = typer.Option(True, "--enable/--no-enable", help="Also turn on online lookups."),
 ):
     """Store your VirusTotal API key (prompts hidden if omitted, keeping it out of shell history)."""

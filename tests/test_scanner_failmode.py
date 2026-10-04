@@ -76,8 +76,8 @@ def test_engine_load_error_makes_scan_degraded(tmp_path):
 
 
 def test_yara_load_error_distinguishes_compile_from_empty():
-    from warden.engines.yara_engine import YaraEngine
     from warden.config import BUNDLED_RULES_DIR
+    from warden.engines.yara_engine import YaraEngine
     eng = YaraEngine([BUNDLED_RULES_DIR])
     eng._rules = None
     eng._load_error = "YARA compile failed: boom"

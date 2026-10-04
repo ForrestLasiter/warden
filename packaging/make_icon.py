@@ -7,7 +7,6 @@ Outputs into assets/: icon-256.png, icon-512.png, favicon-32.png, warden.ico
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 from PIL import Image, ImageDraw

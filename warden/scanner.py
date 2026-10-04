@@ -10,19 +10,20 @@ import os
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
-# Directory recursion safety limits (defend against symlink cycles / pathological
-# trees even when follow_symlinks is on).
-_MAX_DEPTH = 100
-
-from .config import Config, BUNDLED_RULES_DIR
+from .config import BUNDLED_RULES_DIR, Config
 from .engines import (
     ClamAVEngine,
+    Engine,
     HashEngine,
     HeuristicsEngine,
     ScanContext,
     YaraEngine,
 )
 from .models import FileResult, ScanReport, now_iso
+
+# Directory recursion safety limits (defend against symlink cycles / pathological
+# trees even when follow_symlinks is on).
+_MAX_DEPTH = 100
 
 # Callback fired after each file so UIs can show live progress.
 ProgressCallback = Callable[[FileResult], None]
@@ -44,7 +45,7 @@ class Scanner:
         self.clamav = ClamAVEngine(enabled=self.config.use_clamav)
 
         # Content engines need file bytes; hash/clam operate differently.
-        self._engines = [self.yara, self.hashes, self.heuristics, self.clamav]
+        self._engines: list[Engine] = [self.yara, self.hashes, self.heuristics, self.clamav]
 
         # An engine that FAILED to load (e.g. a broken YARA ruleset) silently
         # reduces coverage; record it so scans are reported degraded, not clean.

@@ -1,6 +1,6 @@
 """Tests for the core data models (serialization + verdict logic)."""
 
-from warden.models import Finding, FileResult, ScanReport, Severity
+from warden.models import FileResult, Finding, ScanReport, Severity
 
 
 def test_severity_parse_and_order():

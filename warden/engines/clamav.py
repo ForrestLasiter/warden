@@ -42,9 +42,9 @@ class ClamAVEngine:
         return "not installed (optional)"
 
     def scan(self, ctx: ScanContext) -> list[Finding]:
-        if not self.available():
-            return []
         binary = self._daemon or self._standalone
+        if binary is None:
+            return []
         # --no-summary keeps output to one "path: RESULT" line per file.
         cmd = [binary, "--no-summary", "--stdout", str(ctx.path)]
         if self._daemon:
