@@ -59,6 +59,7 @@ class Config:
     follow_symlinks: bool = False
     use_clamav: bool = True          # used only if clam binaries are found
     online_hash_lookup: bool = False  # opt-in; sends file hashes to a remote API
+    offline: bool = False             # hard switch: never touch the network
     virustotal_api_key: str = ""      # optional; enables the richer VT provider
     scan_archives: bool = True        # look inside zip/tar/gzip/... (bounded)
     check_signatures: bool = True     # ask the OS for publisher signatures on flagged files
@@ -113,6 +114,7 @@ class Config:
         cfg.follow_symlinks = _as_bool(raw.get("follow_symlinks"), cfg.follow_symlinks)
         cfg.use_clamav = _as_bool(raw.get("use_clamav"), cfg.use_clamav)
         cfg.online_hash_lookup = _as_bool(raw.get("online_hash_lookup"), cfg.online_hash_lookup)
+        cfg.offline = _as_bool(raw.get("offline"), cfg.offline)
         cfg.scan_archives = _as_bool(raw.get("scan_archives"), cfg.scan_archives)
         cfg.check_signatures = _as_bool(raw.get("check_signatures"), cfg.check_signatures)
         cfg.virustotal_api_key = str(raw.get("virustotal_api_key", cfg.virustotal_api_key) or "")
@@ -128,6 +130,7 @@ class Config:
             "follow_symlinks": self.follow_symlinks,
             "use_clamav": self.use_clamav,
             "online_hash_lookup": self.online_hash_lookup,
+            "offline": self.offline,
             "scan_archives": self.scan_archives,
             "check_signatures": self.check_signatures,
             "skip_extensions": sorted(self.skip_extensions),

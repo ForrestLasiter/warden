@@ -164,6 +164,9 @@ class ScanReport:
     errors: int = 0
     engines: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)  # e.g. an engine failed to load
+    # Things worth telling the user that do NOT make the scan incomplete
+    # (stale ClamAV signatures, online lookups suppressed by offline mode).
+    advisories: list[str] = field(default_factory=list)
     unreadable: list[str] = field(default_factory=list)  # dirs/files we couldn't read
     results: list[FileResult] = field(default_factory=list)
 
@@ -230,6 +233,7 @@ class ScanReport:
             "errors": self.errors,
             "engines": self.engines,
             "warnings": self.warnings,
+            "advisories": self.advisories,
             "unreadable": self.unreadable,
             "coverage": self.coverage(),
             "counts_by_verdict": self.counts_by_verdict(),

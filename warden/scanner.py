@@ -44,9 +44,15 @@ class Scanner:
 
         rule_dirs = [BUNDLED_RULES_DIR, self.config.rules_user_dir]
         reputation = None
+        self.advisories: list[str] = []
         if self.config.online_hash_lookup:
-            from .reputation import OnlineReputation
-            reputation = OnlineReputation(self.config)
+            from . import net
+            if net.is_offline(self.config):
+                self.advisories.append(
+                    "offline mode is on: online hash reputation was requested but not used")
+            else:
+                from .reputation import OnlineReputation
+                reputation = OnlineReputation(self.config)
         self.yara = YaraEngine(rule_dirs)
         self.hashes = HashEngine(rule_dirs, reputation=reputation)
         self.heuristics = HeuristicsEngine()
@@ -57,6 +63,10 @@ class Scanner:
         # Content engines need file bytes; hash/clam operate differently.
         self._engines: list[Engine] = [
             self.yara, self.hashes, self.heuristics, self.documents, self.clamav]
+
+        stale = self.clamav.freshness_advisory()
+        if stale:
+            self.advisories.append(stale)
 
         # An engine that FAILED to load (e.g. a broken YARA ruleset) silently
         # reduces coverage; record it so scans are reported degraded, not clean.
@@ -89,7 +99,8 @@ class Scanner:
     ) -> ScanReport:
         target = Path(target)
         report = ScanReport(root=str(target), engines=self.active_engines(),
-                            warnings=list(self.engine_warnings))
+                            warnings=list(self.engine_warnings),
+                            advisories=list(self.advisories))
 
         for path in self._iter_files(target, recursive=recursive, report=report):
             result = self._scan_file(path, report)
@@ -108,7 +119,8 @@ class Scanner:
     ) -> ScanReport:
         """Scan an explicit list of files (used by the system sweep)."""
         report = ScanReport(root="<file-list>", engines=self.active_engines(),
-                            warnings=list(self.engine_warnings))
+                            warnings=list(self.engine_warnings),
+                            advisories=list(self.advisories))
         for p in paths:
             path = Path(p)
             if not path.is_file():

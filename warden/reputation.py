@@ -13,6 +13,9 @@ itself) to an online service to ask whether it's known malware. Two providers:
 
 Results are cached to ``~/.warden/cache/reputation.json`` so repeat scans don't
 re-query. Every network failure fails *open* (no finding), never crashing a scan.
+
+Offline mode (``--offline`` / ``WARDEN_OFFLINE=1`` / ``"offline": true``) wins
+over everything here: no lookup is attempted, whatever else is configured.
 """
 
 from __future__ import annotations
@@ -23,11 +26,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    import httpx
-except Exception:  # pragma: no cover
-    httpx = None  # type: ignore
-
+from . import net
 from .config import Config
 
 _CYMRU_HOST = "malware.hash.cymru.com"
@@ -72,7 +71,9 @@ class OnlineReputation:
         self._cache = self._load_cache()
         self._mem: dict[str, ReputationResult] = {}
         self._budget = max_lookups          # network calls allowed per run
-        self._disabled = httpx is None      # hard-off if httpx missing
+        self._offline = net.is_offline(self.config)
+        # hard-off if httpx is missing or offline mode is on
+        self._disabled = (not net.available()) or self._offline
         self._last_call = 0.0
         # VirusTotal free tier is ~4/min; space calls out a little.
         self._min_interval = 15.0 if self.provider == "virustotal" else 0.0
@@ -83,6 +84,8 @@ class OnlineReputation:
 
     @property
     def status(self) -> str:
+        if self._offline:
+            return "disabled (offline mode)"
         if self._disabled:
             return "unavailable (httpx missing)"
         return f"{self.provider}" + (" (VT key set)" if self.provider == "virustotal" else " (keyless)")
@@ -163,7 +166,7 @@ def _cymru_lookup(sha1: str | None) -> ReputationResult | None:
     if not sha1:
         return None
     name = f"{sha1.lower()}.{_CYMRU_HOST}"
-    r = httpx.get(
+    r = net.get(
         _DOH_URL, params={"name": name, "type": "TXT"},
         headers={"accept": "application/dns-json"}, timeout=6.0,
     )
@@ -195,7 +198,7 @@ def _parse_cymru_txt(txt: str) -> ReputationResult | None:
 def _vt_lookup(sha256: str | None, api_key: str) -> ReputationResult | None:
     if not sha256:
         return None
-    r = httpx.get(_VT_URL + sha256, headers={"x-apikey": api_key}, timeout=10.0)
+    r = net.get(_VT_URL + sha256, headers={"x-apikey": api_key}, timeout=10.0)
     if r.status_code == 404:
         return ReputationResult(known=False, malicious=False, source="virustotal")
     if r.status_code == 429:

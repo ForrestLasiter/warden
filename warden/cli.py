@@ -22,7 +22,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from . import __version__
+from . import __version__, net
 from .config import Config
 from .history import History
 from .models import FileResult, ScanReport, Severity
@@ -69,6 +69,16 @@ def _esc(value: object) -> str:
     return _rich_escape(text)
 
 
+@app.callback()
+def _global_options(
+    offline: bool = typer.Option(
+        False, "--offline",
+        help="Never use the network, whatever else is configured (also: WARDEN_OFFLINE=1)."),
+):
+    """Warden - open-source malware scanner (YARA + heuristics + hashes + optional ClamAV)."""
+    net.set_offline(offline)
+
+
 @app.command()
 def version():
     """Print the Warden version."""
@@ -92,8 +102,19 @@ def status():
     console.print(f"[dim]Data dir:[/] {cfg.data_dir}")
     console.print(f"[dim]Quarantine:[/] {cfg.quarantine_dir}")
     console.print(f"[dim]User rules:[/] {cfg.rules_user_dir}  (drop .yar files or malware_hashes.txt here)")
+    console.print(f"[dim]Network:[/] {_network_summary(cfg)}")
+    for note in scanner.advisories:
+        console.print(f"[yellow]note:[/] {_esc(note)}")
     if not scanner.clamav.available():
         console.print("[dim]Tip: install ClamAV + run freshclam for millions more signatures (optional).[/]")
+
+
+def _network_summary(cfg: Config) -> str:
+    if net.is_offline(cfg):
+        return "offline mode - no network access"
+    if cfg.online_hash_lookup:
+        return "online hash reputation ENABLED (file hashes are sent to the reputation provider)"
+    return "none (online hash reputation is off)"
 
 
 @app.command()
@@ -264,6 +285,9 @@ def _print_report(report: ScanReport, *, threshold: Severity, quiet: bool):
                 continue
             console.print(f"    [{_style(f.severity)}]-[/] ({_esc(f.engine)}) [bold]{_esc(f.name)}[/]: {_esc(f.description)}")
         _print_context(r)
+
+    for note in report.advisories:
+        console.print(f"[yellow]note:[/] {_esc(note)}")
 
     # A degraded scan (e.g. a YARA ruleset that failed to compile) is not "clean".
     for w in report.warnings:
@@ -499,6 +523,10 @@ def lookup(
     from .reputation import OnlineReputation
 
     cfg = Config.load()
+    if net.is_offline(cfg):
+        console.print("[red]Offline mode is on:[/] 'lookup' needs the network. "
+                      "Drop --offline / WARDEN_OFFLINE / the 'offline' setting to use it.")
+        raise typer.Exit(2)
     cfg.online_hash_lookup = True
     rep = OnlineReputation(cfg, max_lookups=1)
     if not rep.available:
@@ -679,6 +707,52 @@ def schedule_list():
     console.print(table)
 
 
+@schedule_app.command("doctor")
+def schedule_doctor(
+    json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Check that scheduled scans will really run (and whether they have been).
+
+    Compares Warden's registry with the OS scheduler: missing or disabled
+    tasks, a task pointing at a Warden that has moved, a target folder that no
+    longer exists, a stopped cron daemon, failed last runs and orphaned tasks.
+    Exit code 1 if any problem is found.
+    """
+    diagnoses, general = Scheduler().diagnose()
+    problems = bool(general) or any(not d.ok for d in diagnoses)
+    if json_out:
+        typer.echo(_json.dumps({"schedules": [d.to_dict() for d in diagnoses],
+                                "general": general, "ok": not problems}, indent=2))
+        raise typer.Exit(1 if problems else 0)
+
+    if not diagnoses and not general:
+        console.print("[dim]No schedules to check. Add one with 'warden schedule add'.[/]")
+        return
+    table = Table(title="Schedule health")
+    table.add_column("Name", style="bold")
+    table.add_column("Health")
+    table.add_column("State")
+    table.add_column("Last result / run")
+    table.add_column("Next run")
+    for d in diagnoses:
+        health = "[green]OK[/]" if d.ok else f"[red]{len(d.problems)} problem(s)[/]"
+        last = d.info.get("last_result") or d.info.get("last_recorded_run") or "-"
+        table.add_row(_esc(d.name), health, _esc(d.info.get("state") or "-"),
+                      _esc(str(last)[:60]), _esc(d.info.get("next_run") or "-"))
+    if diagnoses:
+        console.print(table)
+    for d in diagnoses:
+        for p in d.problems:
+            console.print(f"[red]x {_esc(d.name)}:[/] {_esc(p)}")
+        for n in d.notes:
+            console.print(f"[yellow]! {_esc(d.name)}:[/] {_esc(n)}")
+    for g in general:
+        console.print(f"[red]x[/] {_esc(g)}")
+    if not problems:
+        console.print("[green]All scheduled scans look healthy.[/]")
+    raise typer.Exit(1 if problems else 0)
+
+
 @schedule_app.command("remove")
 def schedule_remove(name: str = typer.Argument(..., help="Schedule name to remove.")):
     """Remove a scheduled scan."""
@@ -694,6 +768,7 @@ def schedule_remove(name: str = typer.Argument(..., help="Schedule name to remov
 # name -> (type, help)
 _CONFIG_FIELDS = {
     "online_hash_lookup": (bool, "Enable online hash reputation by default."),
+    "offline": (bool, "Hard switch: never use the network (overrides online lookups)."),
     "use_clamav": (bool, "Use ClamAV if its binaries are on PATH."),
     "follow_symlinks": (bool, "Follow symlinks when walking folders."),
     "scan_archives": (bool, "Look inside zip/tar/gzip archives (bounded)."),
@@ -831,6 +906,118 @@ def config_set_vt_key(
 def config_path():
     """Print the path to the config file."""
     console.print(str(Config.load().config_path))
+
+
+# -- privacy -------------------------------------------------------------
+def _count(path: Path, pattern: str) -> int:
+    try:
+        return sum(1 for _ in path.glob(pattern))
+    except OSError:
+        return 0
+
+
+def privacy_report(cfg: Config) -> dict:
+    """Everything Warden stores and every way it can touch the network."""
+    from . import secrets as _secrets
+    from .reputation import OnlineReputation
+
+    offline = net.is_offline(cfg)
+    vt_key, vt_source = _resolve_vt_key()
+    cache = cfg.cache_dir / "reputation.json"
+    try:
+        cached = len(_json.loads(cache.read_text(encoding="utf-8"))) if cache.exists() else 0
+    except (OSError, ValueError, TypeError):
+        cached = 0
+    provider = "none"
+    if cfg.online_hash_lookup and not offline:
+        provider = OnlineReputation(cfg).provider
+    return {
+        "telemetry": "none - Warden has no analytics, crash reporting, update checks or accounts",
+        "network": {
+            "offline_mode": offline,
+            "online_hash_lookup_enabled": bool(cfg.online_hash_lookup) and not offline,
+            "provider_in_use": provider,
+            "what_is_sent": "only a file's SHA-1/SHA-256 hash - never file contents, names or paths",
+            "destinations": {
+                "cymru": "cloudflare-dns.com (DNS-over-HTTPS query to Team Cymru's hash registry)",
+                "virustotal": "www.virustotal.com (only if you stored a VirusTotal API key)",
+                "rule packs": "only the URL you pass to 'warden rules install <url>'",
+            },
+            "when": "only when you pass --online, set online_hash_lookup, run 'warden lookup', "
+                    "or install a rule pack from a URL",
+        },
+        "stored_on_this_computer": {
+            "data_dir": str(cfg.data_dir),
+            "config": str(cfg.config_path),
+            "history_reports": {
+                "count": _count(cfg.history_dir, "*.json"), "path": str(cfg.history_dir),
+                "contains": "absolute file paths, file hashes, sizes and finding details for "
+                            "every scan saved with --save (and every dashboard/scheduled scan)",
+            },
+            "quarantine_items": {
+                "count": _count(cfg.quarantine_dir, "*.qbin") + _count(cfg.quarantine_dir, "*.qenc"),
+                "path": str(cfg.quarantine_dir),
+                "contains": "neutralized copies of quarantined files plus their original "
+                            "absolute paths, hashes and findings",
+            },
+            "reputation_cache": {
+                "count": cached, "path": str(cache),
+                "contains": "hashes you looked up online and the answers",
+            },
+            "schedules": str(cfg.data_dir / "schedules.json"),
+            "virustotal_key": {"stored": bool(vt_key), "where": vt_source,
+                               "secret_backend": _secrets.backend_name()},
+        },
+        "how_to_erase": [
+            "warden history prune --keep 0     (delete saved reports)",
+            "warden quarantine purge --all     (permanently delete quarantined items)",
+            f"delete the folder {cfg.data_dir}  (removes everything Warden stores)",
+        ],
+    }
+
+
+@app.command()
+def privacy(
+    json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+):
+    """Show exactly what Warden stores on this computer and what it sends anywhere.
+
+    Short version: nothing leaves your machine unless you turn on online hash
+    lookups, and there is no telemetry of any kind.
+    """
+    cfg = Config.load()
+    rep = privacy_report(cfg)
+    if json_out:
+        typer.echo(_json.dumps(rep, indent=2))
+        return
+    n = rep["network"]
+    s = rep["stored_on_this_computer"]
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(no_wrap=True, style="bold")
+    grid.add_column(overflow="fold")
+    grid.add_row("Telemetry", "[green]None.[/] No analytics, crash reports, update checks or accounts.")
+    if n["offline_mode"]:
+        net_line = "[green]Offline mode is ON[/] - Warden cannot use the network at all."
+    elif n["online_hash_lookup_enabled"]:
+        net_line = (f"[yellow]Online hash lookups are ON[/] (provider: {n['provider_in_use']}). "
+                    f"Hashes of scanned executables/documents are sent.")
+    else:
+        net_line = "[green]Off.[/] With current settings Warden makes no network connections."
+    grid.add_row("Network", net_line)
+    grid.add_row("If enabled, sends", n["what_is_sent"])
+    grid.add_row("...to", "; ".join(f"{k}: {v}" for k, v in n["destinations"].items()))
+    grid.add_row("...only when", n["when"])
+    grid.add_row("", "")
+    grid.add_row("Data folder", _esc(s["data_dir"]))
+    h, q, c = s["history_reports"], s["quarantine_items"], s["reputation_cache"]
+    grid.add_row("Scan history", f"{h['count']} report(s) - {h['contains']}")
+    grid.add_row("Quarantine", f"{q['count']} item(s) - {q['contains']}")
+    grid.add_row("Lookup cache", f"{c['count']} entr(ies) - {c['contains']}")
+    k = s["virustotal_key"]
+    grid.add_row("VirusTotal key", (f"stored ({_esc(k['where'])})" if k["stored"] else "not set"))
+    grid.add_row("", "")
+    grid.add_row("To erase", "\n".join(_esc(x) for x in rep["how_to_erase"]))
+    console.print(Panel(grid, title="Warden privacy report", border_style="blue"))
 
 
 def _launched_by_double_click() -> bool:
