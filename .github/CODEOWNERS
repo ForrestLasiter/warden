@@ -1,2 +1,10 @@
 # Default owner for everything in this repo.
 * @ForrestLasiter
+
+# Security-sensitive paths: release/build pipeline, installers, and the release
+# verification docs. Changes here especially warrant review.
+/.github/workflows/   @ForrestLasiter
+/scripts/             @ForrestLasiter
+/packaging/           @ForrestLasiter
+/requirements-release.txt @ForrestLasiter
+/docs/VERIFY.md       @ForrestLasiter
