@@ -27,6 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from . import audit
 from .config import Config
 from .models import Severity, now_iso
 from .storage import file_lock
@@ -171,6 +172,8 @@ class Scheduler:
             detail = self._install_os_task(spec)
             specs.append(spec.to_dict())
             self._save(specs)
+        audit.record("schedule.add", self.config, name=spec.name, kind=spec.kind,
+                     target=spec.target, frequency=spec.frequency, time=spec.time)
         return detail
 
     def remove(self, name: str) -> None:
@@ -184,6 +187,7 @@ class Scheduler:
             if not present:
                 raise SchedulerError(f"no schedule named '{name}' (removed any orphaned OS task)")
             self._save([s for s in specs if s["name"] != name])
+        audit.record("schedule.remove", self.config, name=name)
 
     # -- diagnostics ------------------------------------------------------
     def diagnose(self) -> DiagnosisResult:

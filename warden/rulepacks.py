@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import audit
 from .config import Config
 from .models import now_iso
 from .storage import atomic_write_bytes, atomic_write_json, file_lock, secure_dir
@@ -294,6 +295,7 @@ class RulePackManager:
             "key_id": kid, "public_key": base64.b64encode(raw).decode("ascii"),
             "name": "".join(c for c in label if c.isprintable())[:80], "added": now_iso(),
         }, mode=0o600)
+        audit.record("rules.trust", self.config, key_id=kid, name=label)
         return kid
 
     def untrust(self, kid: str) -> None:
@@ -303,6 +305,7 @@ class RulePackManager:
         if not path.exists():
             raise RulePackError(f"no trusted key with id {kid}")
         path.unlink()
+        audit.record("rules.untrust", self.config, key_id=kid)
 
     def trusted_keys(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -417,6 +420,11 @@ class RulePackManager:
             history = history[-_KEEP_OLD_VERSIONS:]
             state[name] = {"active": version, "history": history, "installed": installed}
             self._save_state(state)
+        audit.record("rules.install", self.config, name=name, version=version,
+                     previous_version=active if isinstance(active, int) else None,
+                     signed=signer is not None, key_id=signer["key_id"] if signer else None,
+                     sha256=hashlib.sha256(pack).hexdigest(),
+                     allow_unsigned=allow_unsigned, allow_downgrade=allow_downgrade)
         return next(p for p in self.packs() if p.name == name and p.active)
 
     def rollback(self, name: str) -> PackInfo:
@@ -433,9 +441,12 @@ class RulePackManager:
                     break
             else:
                 raise RulePackError(f"'{name}' has no earlier version to roll back to")
+            rolled_from = entry.get("active")
             entry["active"], entry["history"] = previous, history
             state[name] = entry
             self._save_state(state)
+        audit.record("rules.rollback", self.config, name=name, version=previous,
+                     previous_version=rolled_from)
         return next(p for p in self.packs() if p.name == name and p.active)
 
     def remove(self, name: str) -> None:
@@ -448,6 +459,7 @@ class RulePackManager:
             state.pop(name)
             self._save_state(state)
             shutil.rmtree(self.root / name, ignore_errors=True)
+        audit.record("rules.remove", self.config, name=name)
 
     def packs(self) -> list[PackInfo]:
         out: list[PackInfo] = []

@@ -492,3 +492,22 @@ def test_dashboard_get_paths_never_500(fuzz_server, tail):
         resp.read()
         conn.close()
         assert resp.status < 500, prefix + tail
+
+
+# -- audit log -----------------------------------------------------------
+@SLOW
+@given(st.lists(st.binary(max_size=120) | json_values.map(lambda v: json.dumps(v).encode()), max_size=6),
+       st.dictionaries(st.text(max_size=10), json_values, max_size=4))
+def test_audit_log_survives_any_file_content(tmp_path, lines, details):
+    from warden.audit import AuditLog
+    log = AuditLog(Config(data_dir=tmp_path))
+    log.dir.mkdir(parents=True, exist_ok=True)
+    log.path.write_bytes(b"\n".join(lines) + (b"\n" if lines else b""))
+    res = log.verify()                                  # never raises on junk
+    assert isinstance(res["ok"], bool) and isinstance(res["problems"], list)
+    assert isinstance(log.entries(), list)
+    entry = log.record("fuzz.event", **{f"k{i}": v for i, v in enumerate(details.values())})
+    assert entry is not None and entry["event"] == "fuzz.event"   # a damaged log never blocks new entries
+    json.dumps(entry)
+    assert log.entries()[-1]["hash"] == entry["hash"]
+    log.prune(0)

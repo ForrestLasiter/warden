@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from . import audit
 from .config import Config
 from .models import ScanReport
 
@@ -59,6 +60,10 @@ class History:
         payload = {"id": entry_id, "kind": kind, **report.to_dict()}
         from .storage import atomic_write_json
         atomic_write_json(out, payload)
+        # Data minimisation: with a retention period set, reports older than it
+        # are dropped whenever a new one is saved (setting it IS the consent).
+        if self.config.history_retention_days > 0:
+            self.expire(self.config.history_retention_days)
         return HistoryEntry(
             id=entry_id, kind=kind, when=report.finished or report.started,
             root=report.root, files_scanned=report.files_scanned,
@@ -116,4 +121,30 @@ class History:
                 removed += 1
             except OSError:
                 pass
+        if removed:
+            audit.record("history.prune", self.config, removed=removed, kept=keep)
+        return removed
+
+    def expire(self, older_than_days: float) -> int:
+        """Delete reports older than ``older_than_days`` (by the timestamp in
+        their file name, which Warden wrote - not by anything inside the file)."""
+        cutoff = datetime.now(timezone.utc).timestamp() - older_than_days * 86400
+        removed = 0
+        for fp in self.dir.glob("*.json"):
+            m = re.match(r"^(\d{8}T\d{6})", fp.stem)
+            if not m:
+                continue
+            try:
+                when = datetime.strptime(m.group(1), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+            if when.timestamp() < cutoff:
+                try:
+                    fp.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+        if removed:
+            audit.record("history.prune", self.config, removed=removed,
+                         older_than_days=older_than_days)
         return removed

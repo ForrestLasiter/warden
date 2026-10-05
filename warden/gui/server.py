@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .. import net
+from .. import audit, net
 from ..config import Config
 from ..history import History
 from ..models import FileResult, Severity
@@ -204,8 +204,10 @@ def _run_scan_job(job_id: str, path: str, min_severity: str, save: bool, online:
             JOBS.bump(job_id, result.is_threat)
 
         report = scanner.scan_path(path, progress=progress, limits=_limits(job_id, time_limit))
-        if save:
-            History().save(report, kind="scan")
+        history_id = History().save(report, kind="scan").id if save else None
+        audit.record("scan.completed", cfg, **audit.scan_details(
+            report, kind="scan", source="dashboard", history_id=history_id,
+            online=cfg.online_hash_lookup and not net.is_offline(cfg)))
         _finish(job_id, report)
     except Exception as exc:  # noqa: BLE001
         JOBS.update(job_id, status="error", error=str(exc))
@@ -224,8 +226,10 @@ def _run_sweep_job(job_id: str, quick: bool, save: bool, online: bool = False,
 
         report, categories = sweeper.run(quick=quick, progress=progress,
                                          limits=_limits(job_id, time_limit))
-        if save:
-            History().save(report, kind="sweep")
+        history_id = History().save(report, kind="sweep").id if save else None
+        audit.record("sweep.completed", cfg, **audit.scan_details(
+            report, kind="sweep", source="dashboard", history_id=history_id,
+            online=cfg.online_hash_lookup and not net.is_offline(cfg)))
         _finish(
             job_id, report,
             categories=[{"name": c.name, "description": c.description, "files": len(c.paths)}
@@ -562,8 +566,10 @@ def serve(host: str = "127.0.0.1", port: int = 8787, open_browser: bool = True) 
     print("=" * 60)
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    audit.record("dashboard.start", None, address=f"{host}:{port}")
     try:
         httpd.serve_forever()
+        audit.record("dashboard.stop", None, address=f"{host}:{port}", reason="quit from the page")
         print("\nWarden has stopped. You can close this window.")
     except KeyboardInterrupt:
         print("\nShutting down.")

@@ -48,6 +48,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import audit
 from .config import Config
 from .models import FileResult, now_iso
 from .storage import atomic_write_json, file_lock, fsync_dir, secure_dir
@@ -251,7 +252,13 @@ class Quarantine:
                 sidecar.unlink(missing_ok=True)
                 self._save_index([e for e in self._load_index() if e.get("id") != entry_id])
             raise QuarantineError(f"could not remove original {src}: {exc}") from exc
+        self._audit("quarantine.add", entry.to_dict())
         return entry
+
+    def _audit(self, event: str, entry: dict[str, Any], **extra: Any) -> None:
+        audit.record(event, self.config, id=entry.get("id"), path=entry.get("original_path"),
+                     sha256=entry.get("sha256"), verdict=entry.get("verdict"),
+                     encrypted=bool(entry.get("encrypted")), **extra)
 
     def _record(self, entry: QuarantineEntry) -> None:
         # 2. sidecar (source of truth) + 3. index, under a lock so concurrent
@@ -314,6 +321,7 @@ class Quarantine:
             except OSError:
                 pass
             self._save_index(index)
+            self._audit("quarantine.restore", match, restored_to=str(target), forced=bool(force))
             return target
 
     def delete(self, entry_id: str) -> None:
@@ -323,8 +331,10 @@ class Quarantine:
             remaining = [e for e in index if e.get("id") != entry_id]
             if len(remaining) == len(index):
                 raise QuarantineError(f"no quarantine entry with id {entry_id}")
+            gone = next(e for e in index if e.get("id") == entry_id)
             self._unlink_files(entry_id)
             self._save_index(remaining)
+        self._audit("quarantine.delete", gone)
 
     def _unlink_files(self, entry_id: str) -> None:
         if not _ID_RE.match(str(entry_id)):
@@ -380,6 +390,8 @@ class Quarantine:
             except OSError:
                 pass
             self._save_index(index)
+        self._audit("quarantine.rescan", match, still_threat=result.is_threat,
+                    current_verdict=result.verdict.label)
         return result
 
     # -- cleanup ----------------------------------------------------------
@@ -418,6 +430,10 @@ class Quarantine:
                 for entry in selected:
                     self._unlink_files(entry.id)
                 self._save_index(keep)
+        if not dry_run:
+            for entry in selected:
+                self._audit("quarantine.delete", entry.to_dict(), reason="purge",
+                            older_than_days=older_than_days, restored_only=restored_only)
         return selected
 
     # -- export / import --------------------------------------------------
@@ -466,6 +482,8 @@ class Quarantine:
             raise QuarantineError(f"{out_path} already exists; refusing to overwrite") from None
         finally:
             Path(tmp).unlink(missing_ok=True)
+        self._audit("quarantine.export", match, bundle=str(out_path),
+                    password_protected=bool(password))
         return out_path
 
     def import_bundle(self, bundle: Path, *, password: str | None = None) -> QuarantineEntry:
@@ -552,6 +570,7 @@ class Quarantine:
                 encrypted=encrypt, imported=True,
             )
             self._record(entry)
+            self._audit("quarantine.import", entry.to_dict(), bundle=str(bundle))
             return entry
         finally:
             for f in workdir.glob("*"):

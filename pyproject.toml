@@ -52,7 +52,7 @@ Issues = "https://github.com/ForrestLasiter/warden/issues"
 include = ["warden*"]
 
 [tool.setuptools.package-data]
-warden = ["rules/*.yar", "rules/*.yara", "gui/static/*"]
+warden = ["rules/*.yar", "rules/*.yara", "gui/static/*", "licenses/*.txt", "THIRD_PARTY_NOTICES.txt"]
 
 [tool.ruff]
 line-length = 110
