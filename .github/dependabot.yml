@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned GitHub Actions current. (Python build dependencies are
+# hash-locked in requirements-release.txt and regenerated with uv; they are
+# watched by Dependabot alerts and by pip-audit, which CI runs on every change
+# and once a week.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
