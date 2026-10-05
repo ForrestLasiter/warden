@@ -90,6 +90,16 @@ jobs:
           # A clean file scans clean (exit 0) through every engine.
           echo "hello" > "$tmp/clean.txt"
           "$BIN" scan "$tmp/clean.txt"
+          # ...also when output is not a UTF-8 terminal (redirected / legacy console).
+          PYTHONIOENCODING=cp1252 "$BIN" scan "$tmp/clean.txt" > /dev/null
+          # The third-party license notices were baked into this binary.
+          "$BIN" licenses --full > "$tmp/notices.txt"
+          grep -q "THIRD-PARTY SOFTWARE NOTICES" "$tmp/notices.txt"
+          grep -q "PyInstaller bootloader" "$tmp/notices.txt"
+          grep -q "YARA-X Authors" "$tmp/notices.txt"
+          # The scans above were recorded, and the audit chain verifies.
+          "$BIN" audit verify
+          "$BIN" posture --json > /dev/null
 
       - name: Rename artifact
         shell: bash

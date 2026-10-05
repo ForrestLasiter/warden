@@ -40,7 +40,9 @@ def run():
         head = page.query_selector(".result-head")
         if head:
             head.click()
-        page.wait_for_timeout(4300)  # let the status toast auto-dismiss
+        # Hide the transient status toast and drop focus so neither is in the shot.
+        page.evaluate("document.querySelector('#toast').hidden = true; document.activeElement.blur()")
+        page.wait_for_timeout(300)
         page.screenshot(path=str(OUT / "dashboard-light.png"))
         print("wrote dashboard-light.png")
 

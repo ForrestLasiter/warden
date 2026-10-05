@@ -10,7 +10,7 @@ from warden.gui import server as gui
 
 
 @pytest.fixture()
-def httpd():
+def httpd(home):
     srv = ThreadingHTTPServer(("127.0.0.1", 0), gui.Handler)
     port = srv.server_address[1]
     t = threading.Thread(target=srv.serve_forever, daemon=True)

@@ -7,6 +7,10 @@ body:
       value: |
         Thanks for reporting a bug! Please don't report security vulnerabilities
         here — see our [Security policy](https://github.com/ForrestLasiter/warden/security/policy).
+
+        **Before you paste anything:** scan reports, `--json` output and
+        screenshots contain file paths, which can include your user name or
+        other private names. Remove or replace anything you would not want public.
   - type: textarea
     id: what-happened
     attributes:

@@ -22,6 +22,7 @@ Windows). On Linux and macOS it is created readable only by you.
 | `config.json` | Your settings. No secrets. | You change a setting |
 | `history/*.json` | One report per saved scan: **the absolute path of every file scanned**, its size and SHA-256, every finding, timings, and the folder you scanned | `--save`, every dashboard scan, every scheduled scan |
 | `quarantine/` | A neutralized (or encrypted) copy of each quarantined file, plus its **original absolute path**, hash, verdict and findings | You quarantine a file |
+| `audit/audit.jsonl` | The audit trail: one line per action Warden took (scan run, file quarantined / restored / deleted, setting changed, rules or schedule changed) with the time, your **OS user name**, the **computer name** and the paths involved. Never file contents, never secrets. | Any of those actions (on by default; `warden config set audit_log false` turns it off) |
 | `cache/reputation.json` | Hashes you looked up online and the answers | You use online lookups |
 | `schedules.json` | Scheduled scans you created (name, target path, time) | `warden schedule add` |
 | `rules/`, `rulepacks/`, `trusted_keys/` | Detection rules you added and the signing keys you trust | You add rules |
@@ -33,7 +34,12 @@ Windows). On Linux and macOS it is created readable only by you.
   and client names, folder structure. A history report or a `--json` report is a
   list of them. Review a report before attaching it to a bug report.
 - **History grows.** Each saved scan lists every file it looked at. Prune with
-  `warden history prune --keep 20`.
+  `warden history prune --keep 20` or `--older-than 90d`, or set a retention
+  period so it happens by itself: `warden config set history_retention_days 90`.
+- **The audit trail records who and where.** It exists so that you (or an
+  auditor) can see what was done on the machine and detect if the record was
+  edited (`warden audit verify`). It is a local file like the rest; it is never
+  sent anywhere. If you don't want it, turn it off.
 - **Quarantine keeps the file.** A quarantined file is still on your disk until
   you delete it. By default it is only *neutralized* (so it can't run by
   accident), not encrypted: anyone who can read your home folder can recover it.
@@ -86,10 +92,13 @@ sets no cookies (your theme choice is kept in the browser's local storage).
 ## Erasing your data
 
 ```bash
-warden history prune --keep 0     # delete all saved reports
-warden quarantine purge --all     # permanently delete quarantined files
+warden history prune --keep 0          # delete all saved reports
+warden quarantine purge --all          # permanently delete quarantined files
+warden audit prune --older-than 0d     # clear the audit trail (leaves one line saying so)
 warden config unset online_hash_lookup
 ```
+
+Deletion is ordinary file deletion - Warden does not overwrite ("shred") data.
 
 To remove everything, delete the `~/.warden` folder. Uninstalling the program
 (`install.sh --uninstall` / `install.ps1 -Uninstall`) leaves that folder in

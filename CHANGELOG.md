@@ -6,6 +6,76 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
+
+An accuracy and compliance release: a real accessibility audit (which found and
+fixed failures), an audit trail, license notices, and documentation of exactly
+which standards do and do not apply.
+
+### Accessibility — fixed
+A full audit of the dashboard (axe-core plus scripted keyboard, reflow, contrast
+and target-size checks; every view, both themes, desktop and phone) found
+WCAG 2.1 AA failures that the earlier self-check had missed. All are fixed:
+
+- **Dark theme contrast (1.4.3):** white text on the primary / pressed fill was
+  3.74:1, on the danger fill and "Critical" badge 2.52:1, selected navigation
+  4.08:1. All text is now at least 4.5:1 in both themes.
+- **Hover (1.4.3):** hovering a filled button replaced its fill with light grey
+  under white text.
+- **Reflow (1.4.10):** the page scrolled sideways at 320 CSS px / 400 % zoom.
+- **Non-text contrast (1.4.11):** input and button boundaries were about 2:1.
+- **Errors (3.3.1, 3.3.3):** errors showed only in a message that disappeared;
+  they are now persistent, next to the form, tied to the field, and say how to
+  fix the problem.
+- **Status messages (4.1.3):** results containers were live regions and progress
+  was announced on every update; now one throttled announcement, and focus moves
+  to the result when a scan ends.
+- Also: stopped screen landmark, dialog makes the page inert, 24 px checkboxes,
+  row buttons name the file they act on, new-tab links say so, forced-colours
+  (Windows High Contrast) support, per-view page titles.
+- `tests/test_accessibility.py` recomputes every colour pair for both themes in
+  CI; `packaging/a11y_audit.py` is the browser audit. Conformance report:
+  `docs/ACCESSIBILITY.md`.
+
+### Added
+- **Audit trail** (`warden audit show | verify | export | prune`): an append-only,
+  hash-chained record of scans, quarantine actions, setting changes, rule-pack
+  and trusted-key changes, schedule changes and online lookups, with time, OS
+  user and host. Never contains secrets or file contents. `audit_log` setting.
+- **`warden posture`**: engines and signature freshness, rule packs, recurring
+  scans, last scan, quarantine encryption, network use, audit-trail integrity,
+  retention, data-folder access and secret storage, each with a recommendation.
+  `--json` for evidence, `--strict` for automation.
+- **`warden licenses`** and bundled **third-party license notices** in every
+  binary, generated at build time for exactly the versions inside it.
+- **History retention:** `history_retention_days` (applied when a report is
+  saved) and `warden history prune --older-than`.
+- Scan history records whether a scan was complete.
+- **OpenSSF Scorecard** and **CodeQL** workflows, Dependabot for the pinned
+  Actions, and a weekly CI run so `pip-audit` catches new advisories.
+- `docs/COMPLIANCE.md` (which standards apply to Warden; mapping to SOC 2,
+  ISO 27001, HIPAA, PCI DSS, NIST controls; what Warden is *not*) and
+  `docs/ACCESSIBILITY.md`.
+
+### Fixed
+- **`warden scan … > NUL`, and any scan whose output was not a UTF-8 stream,
+  crashed** with `UnicodeEncodeError` from the progress spinner. Output now
+  replaces characters the stream cannot encode, and the spinner falls back to
+  ASCII.
+- The dashboard's scan summary labelled any threat **"Critical"**; it now shows
+  the worst verdict actually found.
+- History and "Recent activity" showed incomplete scans as **"Clean"**; they are
+  now marked incomplete (dashboard and `warden history list`).
+- `SECURITY.md` directed reporters to GitHub's private vulnerability reporting,
+  which was **not enabled** on the repository. It is now.
+- `warden config set` silently clamped out-of-range values; it now says so.
+- README screenshots were out of date.
+
+### Changed
+- The README no longer describes accessibility as merely "self-assessed
+  targets"; it states what was tested and how.
+- Publishing a release now requires a rehearsal build first (`RELEASING.md`).
+
 ## [0.5.1] - 2026-10-04
 
 The first complete release of the 0.5 series. **v0.5.0 was tagged but never fully
@@ -333,7 +403,8 @@ the CLI surface; new exit code `2` means "a file could not be fully scanned."
 - Accessible web dashboard (`warden gui`) — WCAG 2.1 AA, light/dark/system theme.
 - Standalone Windows/Linux/macOS binaries published to GitHub Releases via CI.
 
-[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/ForrestLasiter/warden/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ForrestLasiter/warden/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/ForrestLasiter/warden/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ForrestLasiter/warden/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ForrestLasiter/warden/compare/v0.4.4...v0.4.5

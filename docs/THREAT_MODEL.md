@@ -215,6 +215,25 @@ Warden or sets a pathological limit; secrets leak.
 (for example widen `skip_extensions`) or add rules. That is the "local malware"
 boundary in §5.
 
+### 4.8a Audit trail
+
+*Threat:* an action (restoring a quarantined file, turning off a protection,
+installing rules) leaves no trace, or its trace is quietly edited afterwards.
+
+- Scans, quarantine actions, setting changes, rule-pack and trusted-key changes,
+  schedule changes and online lookups are appended to a hash-chained log with
+  the time, OS user and host. Each entry's hash covers the previous entry, so
+  editing, removing or reordering a line breaks the chain (`warden audit
+  verify`). Turning the log off is itself the last thing it records.
+- Entries never contain secrets or file contents; values are length-bounded and
+  stripped of control characters.
+- A failure to write the log never blocks the action being logged (a scanner
+  that stops scanning because its log is full is worse).
+
+*Residual risk:* **tamper-evident, not tamper-proof.** Whoever can write the
+file as you can rewrite the whole chain, or truncate its end, consistently. To
+resist that, forward the log to another system or record the head hash there.
+
 ### 4.9 Rule packs
 
 *Threat:* a malicious or downgraded rule pack blinds the scanner; a pack escapes

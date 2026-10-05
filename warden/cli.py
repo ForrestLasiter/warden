@@ -1,12 +1,23 @@
 """Warden command-line interface.
 
-    warden status                 show which engines are active
+    warden gui                    open the local dashboard
     warden scan <path>            scan a file or folder on demand
-    warden scan <path> --quarantine   isolate anything flagged (asks first)
-    warden quarantine list        show quarantined items
-    warden quarantine restore ID  put a file back
-    warden quarantine delete ID   permanently remove (confirms)
-    warden update-rules           info on adding rules/signatures
+    warden sweep                  scan where malware persists and hides
+    warden inspect <file>         describe a file (hashes, format, signature)
+    warden lookup <file|hash>     online hash reputation (opt-in)
+    warden quarantine ...         list / restore / rescan / delete / purge / export / import
+    warden history ...            list / show / prune saved reports
+    warden schedule ...           add / list / doctor / test / remove recurring scans
+    warden rules ...              signed rule packs: install / verify / rollback ...
+    warden audit ...              show / verify / export / prune the audit trail
+    warden config ...             view and change settings
+    warden status                 engines, signature freshness, network state
+    warden posture                security-relevant state, with recommendations
+    warden privacy                what is stored locally and what can be sent
+    warden licenses               licenses of Warden and bundled software
+
+`--offline` before any command guarantees no network use. Exit codes of scan and
+sweep: 0 clean, 1 threats found, 2 incomplete (never treat 2 as clean).
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from . import __version__, net
+from . import __version__, audit, net
 from .config import Config
 from .history import History
 from .models import FileResult, ScanReport, Severity
@@ -49,7 +60,33 @@ config_app = typer.Typer(help="View and change Warden settings (~/.warden/config
 app.add_typer(config_app, name="config")
 rules_app = typer.Typer(help="Install, verify and roll back signed rule packs.", no_args_is_help=True)
 app.add_typer(rules_app, name="rules")
+audit_app = typer.Typer(help="Review and verify the audit trail of what Warden did.", no_args_is_help=True)
+app.add_typer(audit_app, name="audit")
 
+def _harden_stdio() -> None:
+    """Never let an un-encodable character crash a command.
+
+    Output does not always go to a UTF-8 terminal: it may be redirected to NUL
+    or a file, captured by a scheduler, or shown in a console using a legacy
+    code page (cp1252, cp437). File names can contain any character. With
+    ``errors="replace"`` such a character is printed as '?' instead of raising
+    UnicodeEncodeError half-way through a scan.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")      # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+def _spinner_name(encoding: str | None = None) -> str:
+    """Rich's default spinner is drawn with braille characters, which only
+    exist in Unicode encodings; fall back to an ASCII one elsewhere."""
+    enc = (encoding if encoding is not None else getattr(sys.stdout, "encoding", "") or "")
+    return "dots" if enc.lower().replace("-", "").replace("_", "") in ("utf8", "utf8sig") else "line"
+
+
+_harden_stdio()
 console = Console()
 
 _SEV_STYLE = {
@@ -163,7 +200,7 @@ def scan(
     threats: list[FileResult] = []
 
     with Progress(
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name=_spinner_name()),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("{task.fields[count]} files"),
@@ -193,9 +230,14 @@ def scan(
         Path(json_out).write_text(_json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         console.print(f"[dim]JSON report written to {json_out}[/]")
 
+    history_id = None
     if save:
         entry = History().save(report, kind="scan")
+        history_id = entry.id
         console.print(f"[dim]Saved to history as {entry.id}[/]")
+    audit.record("scan.completed", cfg, exit_code=_scan_exit_code(report),
+                 **audit.scan_details(report, kind="scan", source="cli", history_id=history_id,
+                                      online=cfg.online_hash_lookup and not net.is_offline(cfg)))
 
     if quarantine and threats:
         _do_quarantine(threats)
@@ -233,7 +275,7 @@ def sweep(
 
     threats: list[FileResult] = []
     with Progress(
-        SpinnerColumn(),
+        SpinnerColumn(spinner_name=_spinner_name()),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(),
         TextColumn("{task.fields[count]} files"),
@@ -271,9 +313,14 @@ def sweep(
         Path(json_out).write_text(_json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         console.print(f"[dim]JSON report written to {json_out}[/]")
 
+    history_id = None
     if save:
         entry = History().save(report, kind="sweep")
+        history_id = entry.id
         console.print(f"[dim]Saved to history as {entry.id}[/]")
+    audit.record("sweep.completed", cfg, exit_code=_scan_exit_code(report),
+                 **audit.scan_details(report, kind="sweep", source="cli", history_id=history_id,
+                                      online=cfg.online_hash_lookup and not net.is_offline(cfg)))
 
     # Recompute threats from the report (location heuristic may have added some).
     flagged = [r for r in report.results if r.is_threat]
@@ -763,6 +810,8 @@ def lookup(
     console.print(f"[dim]Provider: {rep.status}[/]")
     with console.status("Querying online reputation…"):
         result = rep.check(sha256, sha1)
+    audit.record("network.lookup", cfg, provider=rep.provider, sha256=sha256, sha1=sha1,
+                 answered=result is not None)
 
     if result is None:
         console.print("[yellow]No answer[/] (network issue or rate limited). Try again.")
@@ -1072,10 +1121,11 @@ def history_list(
     table.add_column("Kind")
     table.add_column("When (UTC)")
     table.add_column("Files", justify="right")
-    table.add_column("Threats", justify="right")
+    table.add_column("Threats", justify="right", no_wrap=True)
     table.add_column("Target")
     for e in entries:
-        threat_cell = f"[red]{e.threats}[/]" if e.threats else "0"
+        threat_cell = (f"[red]{e.threats}[/]" if e.threats
+                       else ("0" if e.complete else "[yellow]0 (incomplete)[/]"))
         table.add_row(_esc(e.id), _esc(e.kind), _esc(e.when.replace("T", " ")[:19]),
                       str(e.files_scanned), threat_cell, _esc(e.root))
     console.print(table)
@@ -1104,9 +1154,29 @@ def history_show(entry_id: str = typer.Argument(..., help="History ID (or prefix
 
 
 @history_app.command("prune")
-def history_prune(keep: int = typer.Option(50, "--keep", help="How many recent reports to keep.")):
-    """Delete old history, keeping the most recent N."""
-    removed = History().prune(keep=keep)
+def history_prune(
+    keep: int | None = typer.Option(None, "--keep", help="Keep only the most recent N reports (default 50)."),
+    older_than: str | None = typer.Option(None, "--older-than", help="Delete reports older than this (e.g. 90d, 12w)."),
+):
+    """Delete old history: keep the most recent N, or drop everything older than an age.
+
+    To do this automatically, set a retention period:
+    warden config set history_retention_days 90
+    """
+    from .quarantine import parse_age
+    history = History()
+    if older_than is not None:
+        try:
+            days = parse_age(older_than)
+        except ValueError as exc:
+            console.print(f"[red]{_esc(exc)}[/]")
+            raise typer.Exit(2)
+        removed = history.expire(days)
+        console.print(f"[green]Pruned {removed} report(s)[/] older than {_esc(older_than)}.")
+        if keep is None:
+            return
+    keep = 50 if keep is None else keep
+    removed = history.prune(keep=keep)
     console.print(f"[green]Pruned {removed} old report(s).[/] Kept {keep}.")
 
 
@@ -1220,6 +1290,8 @@ def schedule_test(
     except SchedulerError as exc:
         console.print(f"[red]{_esc(exc)}[/]")
         raise typer.Exit(1)
+    audit.record("schedule.test", None, name=res["name"], exit_code=res["exit_code"],
+                 ok=res["ok"], history_saved=res["history_saved"])
     if json_out:
         typer.echo(_json.dumps(res, indent=2))
         raise typer.Exit(0 if res["ok"] else 1)
@@ -1260,6 +1332,8 @@ _CONFIG_FIELDS = {
     "check_signatures": (bool, "Ask the OS for the publisher signature of flagged executables."),
     "quarantine_encryption": (bool, "Seal newly quarantined files with AES-256-GCM (key in the OS secret store)."),
     "quarantine_retention_days": (int, "Age in days used by 'quarantine purge --expired' (0 = keep until deleted)."),
+    "history_retention_days": (int, "Automatically delete saved reports older than this many days (0 = keep)."),
+    "audit_log": (bool, "Keep the append-only audit trail of actions (see 'warden audit')."),
     "max_scan_bytes": (int, "Max file size (bytes) for deep content scanning."),
 }
 # The VirusTotal key is managed separately via `set-vt-key` (OS secret store).
@@ -1344,10 +1418,19 @@ def config_set(
     except (ValueError, TypeError) as exc:
         console.print(f"[red]Invalid value for {key}:[/] {exc}")
         raise typer.Exit(2)
+    previous = getattr(cfg, key)
+    # Record a change that switches the audit trail off while it is still on.
+    if key == "audit_log" and previous and not coerced:
+        audit.record("config.set", cfg, setting=key, value=False, previous=True)
     setattr(cfg, key, coerced)
     cfg.save()
-    shown = _mask(str(coerced)) if key in _SECRET_FIELDS else str(coerced)
+    saved = getattr(Config.load(), key)     # what actually took effect (values are clamped)
+    if key != "audit_log" or saved:
+        audit.record("config.set", Config.load(), setting=key, value=saved, previous=previous)
+    shown = _mask(str(saved)) if key in _SECRET_FIELDS else str(saved)
     console.print(f"[green]Set[/] {key} = {shown}")
+    if saved != coerced:
+        console.print(f"[yellow]Note:[/] {coerced!r} is outside the allowed range; using {saved!r}.")
 
 
 @config_app.command("unset")
@@ -1358,8 +1441,10 @@ def config_unset(key: str = typer.Argument(..., help="Setting name to clear/rese
         raise typer.Exit(2)
     default = getattr(Config(), key)
     cfg = Config.load()
+    previous = getattr(cfg, key)
     setattr(cfg, key, default)
     cfg.save()
+    audit.record("config.set", Config.load(), setting=key, value=default, previous=previous, reset=True)
     console.print(f"[green]Reset[/] {key} to default ({default!r})")
 
 
@@ -1383,6 +1468,9 @@ def config_set_vt_key(
     if enable:
         cfg.online_hash_lookup = True
     cfg.save()
+    # The key itself is never written to the audit trail - only that it was set.
+    audit.record("config.set", cfg, setting="virustotal_api_key", value="(secret stored)",
+                 backend=_secrets.backend_name(), online_hash_lookup=cfg.online_hash_lookup)
     console.print(f"[green]Saved VirusTotal key[/] ({_mask(key)}) to the OS secret store "
                   f"([bold]{_secrets.backend_name()}[/]).")
     if enable:
@@ -1399,6 +1487,14 @@ def config_path():
 def _count(path: Path, pattern: str) -> int:
     try:
         return sum(1 for _ in path.glob(pattern))
+    except OSError:
+        return 0
+
+
+def _line_count(path: Path) -> int:
+    try:
+        with open(path, "rb") as fh:
+            return sum(1 for _ in fh)
     except OSError:
         return 0
 
@@ -1451,6 +1547,18 @@ def privacy_report(cfg: Config) -> dict:
                 "count": cached, "path": str(cache),
                 "contains": "hashes you looked up online and the answers",
             },
+            "audit_log": {
+                "enabled": bool(cfg.audit_log),
+                "count": _line_count(cfg.data_dir / "audit" / "audit.jsonl"),
+                "path": str(cfg.data_dir / "audit" / "audit.jsonl"),
+                "contains": "one line per action (scan run, file quarantined/restored/deleted, "
+                            "setting changed, rules installed): time, OS user name, host name, "
+                            "and the paths involved - never file contents or secrets",
+            },
+            "retention": {
+                "history_retention_days": cfg.history_retention_days,
+                "quarantine_retention_days": cfg.quarantine_retention_days,
+            },
             "schedules": str(cfg.data_dir / "schedules.json"),
             "virustotal_key": {"stored": bool(vt_key), "where": vt_source,
                                "secret_backend": _secrets.backend_name()},
@@ -1458,6 +1566,7 @@ def privacy_report(cfg: Config) -> dict:
         "how_to_erase": [
             "warden history prune --keep 0     (delete saved reports)",
             "warden quarantine purge --all     (permanently delete quarantined items)",
+            "warden audit prune --older-than 0d  (clear the audit trail; leaves a record that it was cleared)",
             f"delete the folder {cfg.data_dir}  (removes everything Warden stores)",
         ],
     }
@@ -1500,11 +1609,288 @@ def privacy(
     grid.add_row("Scan history", f"{h['count']} report(s) - {h['contains']}")
     grid.add_row("Quarantine", f"{q['count']} item(s) - {q['contains']}")
     grid.add_row("Lookup cache", f"{c['count']} entr(ies) - {c['contains']}")
+    a = s["audit_log"]
+    grid.add_row("Audit trail", (f"{a['count']} entr(ies) - {a['contains']}" if a["enabled"]
+                                 else "turned off (audit_log = false)"))
+    r = s["retention"]
+    grid.add_row("Retention", "history: " + (f"{r['history_retention_days']} days" if r["history_retention_days"] else "kept until you delete it")
+                 + "; quarantine: " + (f"{r['quarantine_retention_days']} days (applied by 'quarantine purge --expired')"
+                                       if r["quarantine_retention_days"] else "kept until you delete it"))
     k = s["virustotal_key"]
     grid.add_row("VirusTotal key", (f"stored ({_esc(k['where'])})" if k["stored"] else "not set"))
     grid.add_row("", "")
     grid.add_row("To erase", "\n".join(_esc(x) for x in rep["how_to_erase"]))
     console.print(Panel(grid, title="Warden privacy report", border_style="blue"))
+
+
+# -- audit trail ---------------------------------------------------------
+@audit_app.command("show")
+def audit_show(
+    limit: int = typer.Option(30, "--limit", "-n", min=1, help="How many of the most recent entries to show."),
+    event: str | None = typer.Option(None, "--event", help="Only events starting with this (e.g. quarantine, config.set)."),
+    since: str | None = typer.Option(None, "--since", help="Only entries newer than this age (e.g. 7d, 12h)."),
+    json_out: bool = typer.Option(False, "--json", help="Print the entries as JSON Lines."),
+):
+    """Show recent audit entries: what Warden did, when, and as which user."""
+    from .quarantine import parse_age
+    days = None
+    if since:
+        try:
+            days = parse_age(since)
+        except ValueError as exc:
+            console.print(f"[red]{_esc(exc)}[/]")
+            raise typer.Exit(2)
+    log = audit.AuditLog()
+    entries = log.entries(limit=limit, event=event, since_days=days)
+    if json_out:
+        for e in entries:
+            typer.echo(_json.dumps(e, separators=(",", ":")))
+        return
+    if not entries:
+        console.print("[dim]No audit entries" + ("" if log.enabled else " (the audit log is turned off)") + ".[/]")
+        return
+    table = Table(title="Audit trail (oldest first)")
+    table.add_column("#", justify="right", no_wrap=True)
+    table.add_column("When (UTC)", no_wrap=True)
+    table.add_column("User")
+    table.add_column("Event", style="bold")
+    table.add_column("Details", overflow="fold")
+    for e in entries:
+        details: dict = e["details"] if isinstance(e.get("details"), dict) else {}
+        actor: dict = e["actor"] if isinstance(e.get("actor"), dict) else {}
+        shown = ", ".join(f"{k}={v}" for k, v in details.items() if v not in (None, "", [], False))
+        table.add_row(_esc(e.get("seq", "?")), _esc(str(e.get("ts", ""))[:19].replace("T", " ")),
+                      _esc(actor.get("user", "?")), _esc(e.get("event", "?")), _esc(shown[:300]))
+    console.print(table)
+
+
+@audit_app.command("verify")
+def audit_verify(json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON.")):
+    """Check that the audit trail has not been edited (re-walks its hash chain).
+
+    Exit code 0 if the chain is intact, 1 if entries were modified, removed or
+    reordered. Record the head hash somewhere else to detect a full rewrite.
+    """
+    res = audit.AuditLog().verify()
+    if json_out:
+        typer.echo(_json.dumps(res, indent=2))
+        raise typer.Exit(0 if res["ok"] else 1)
+    if not res["enabled"]:
+        console.print("[yellow]The audit log is turned off[/] (audit_log = false); nothing new is being recorded.")
+    if res["ok"]:
+        console.print(f"[green]Audit trail intact:[/] {res['entries']} entr(ies)"
+                      + (f", {str(res['first'])[:10]} to {str(res['last'])[:10]}" if res["entries"] else "") + ".")
+        if res["head_hash"]:
+            console.print(f"[dim]Head hash:[/] {res['head_hash']}")
+    else:
+        console.print(f"[red]Audit trail FAILED verification[/] ({res['entries']} entr(ies) read):")
+        for p in res["problems"]:
+            console.print(f"  [red]x[/] {_esc(p)}")
+    raise typer.Exit(0 if res["ok"] else 1)
+
+
+@audit_app.command("export")
+def audit_export(out: str = typer.Argument(..., help="File to write (JSON Lines).")):
+    """Copy the audit trail to a file, e.g. to hand to an auditor or a log collector."""
+    try:
+        res = audit.AuditLog().export(Path(out))
+    except (audit.AuditError, OSError) as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(2)
+    console.print(f"[green]Exported[/] {res['entries']} entr(ies) to {_esc(out)}"
+                  + ("" if res["ok"] else " [red](the chain did NOT verify - see 'warden audit verify')[/]"))
+    if res["head_hash"]:
+        console.print(f"[dim]Head hash:[/] {res['head_hash']}")
+
+
+@audit_app.command("prune")
+def audit_prune(
+    older_than: str = typer.Option(..., "--older-than", help="Remove entries older than this (e.g. 365d, 52w)."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+):
+    """Remove old audit entries. The removal itself is recorded, and the chain stays verifiable."""
+    from .quarantine import parse_age
+    try:
+        days = parse_age(older_than)
+    except ValueError as exc:
+        console.print(f"[red]{_esc(exc)}[/]")
+        raise typer.Exit(2)
+    if not yes and not typer.confirm(
+            f"Permanently remove audit entries older than {older_than}? This cannot be undone.", default=False):
+        console.print("[dim]Cancelled.[/]")
+        return
+    removed = audit.AuditLog().prune(days)
+    console.print(f"[green]Removed[/] {removed} audit entr(ies) older than {_esc(older_than)}.")
+
+
+# -- licenses ------------------------------------------------------------
+@app.command()
+def licenses(
+    full: bool = typer.Option(False, "--full", help="Print every license text, not just the list."),
+):
+    """Show the licenses of Warden and the third-party software it includes."""
+    from . import notices
+    if full:
+        typer.echo(notices.notices_text())
+        return
+    text = notices.notices_text()
+    listed = [ln[4:] for ln in text.splitlines() if ln.startswith("  - ")]
+    table = Table(title="Warden and bundled third-party software")
+    table.add_column("Component", style="bold")
+    table.add_column("License")
+    for row in listed:
+        name, _, lic = row.rpartition("  (")
+        table.add_row(_esc(name), _esc(lic.rstrip(")")))
+    console.print(table)
+    console.print("[dim]Full license texts: warden licenses --full[/]")
+
+
+# -- posture -------------------------------------------------------------
+def posture_report(cfg: Config) -> dict:
+    """A point-in-time summary of the settings and state that security reviews
+    ask about. Each check is 'ok', 'attention' (a recommendation applies) or
+    'info'. Nothing here is sent anywhere."""
+    from . import secrets as _secrets
+    from .rulepacks import RulePackManager
+
+    checks: list[dict] = []
+
+    def add(cid: str, title: str, status: str, detail: str, advice: str = "") -> None:
+        checks.append({"id": cid, "title": title, "status": status, "detail": detail, "advice": advice})
+
+    scanner = Scanner(cfg)
+    active, inactive = scanner.active_engines(), scanner.inactive_engines()
+    core_ok = "yara" in active and not scanner.engine_warnings
+    add("engines", "Detection engines", "ok" if core_ok else "attention",
+        f"active: {', '.join(active) or 'none'}; not active: "
+        + (", ".join(f"{k} ({v})" for k, v in inactive.items()) or "none")
+        + ("; " + "; ".join(scanner.engine_warnings) if scanner.engine_warnings else ""),
+        "" if core_ok else "A core engine or rule set failed to load - scans will be reported incomplete.")
+
+    db = scanner.clamav.database_info()
+    if not scanner.clamav.available():
+        add("signatures", "Signature database (ClamAV)", "info", "ClamAV is not installed (optional)",
+            "Install ClamAV and run freshclam for broad signature coverage.")
+    else:
+        stale = scanner.clamav.freshness_advisory()
+        add("signatures", "Signature database (ClamAV)", "attention" if stale else "ok",
+            stale or f"version {db.get('version') if db else '?'}, {db.get('age_days') if db else '?'} day(s) old",
+            "Run freshclam (ideally on a schedule)." if stale else "")
+
+    packs = [p for p in RulePackManager(cfg).packs() if p.active]
+    unsigned = [p.name for p in packs if not p.key_id]
+    add("rules", "Rule packs", "attention" if unsigned else "info",
+        (f"{len(packs)} active" + (f"; unsigned: {', '.join(unsigned)}" if unsigned else "; all signed")) if packs
+        else "none installed (bundled rules and your own rule files are in use)",
+        "Prefer packs signed by a key you trust." if unsigned else "")
+
+    diagnoses, general = Scheduler(cfg).diagnose()
+    broken = [d.name for d in diagnoses if not d.ok]
+    if not diagnoses:
+        add("schedule", "Recurring scans", "attention", "no scan is scheduled",
+            "Warden only scans when asked. Add one: warden schedule add nightly --kind sweep --frequency daily")
+    else:
+        add("schedule", "Recurring scans", "attention" if broken or general else "ok",
+            f"{len(diagnoses)} scheduled" + (f"; problems with: {', '.join(broken)}" if broken else "")
+            + ("; " + "; ".join(general) if general else ""),
+            "Run 'warden schedule doctor' for details." if broken or general else "")
+
+    recent = History(cfg).list(limit=1)
+    if recent:
+        last = recent[0]
+        add("last_scan", "Most recent saved scan", "attention" if last.threats else "ok",
+            f"{last.kind} of {last.root} at {last.when[:19].replace('T', ' ')} UTC - {last.threats} threat(s)",
+            "Review it: warden history show " + last.id if last.threats else "")
+    else:
+        add("last_scan", "Most recent saved scan", "attention", "no saved scan on record",
+            "Run 'warden sweep --save' (dashboard and scheduled scans are saved automatically).")
+
+    q_entries = [e for e in Quarantine(cfg).list_entries() if not e.restored]
+    plain = sum(1 for e in q_entries if not e.encrypted)
+    add("quarantine", "Quarantine at rest",
+        "ok" if cfg.quarantine_encryption and not plain else ("attention" if q_entries or not cfg.quarantine_encryption else "ok"),
+        f"{len(q_entries)} item(s) held; encryption " + ("ON (AES-256-GCM)" if cfg.quarantine_encryption else "off (items are only neutralized)")
+        + (f"; {plain} item(s) stored without encryption" if plain and cfg.quarantine_encryption else ""),
+        "" if cfg.quarantine_encryption and not plain else
+        "If quarantined files may hold sensitive data: warden config set quarantine_encryption true")
+
+    offline = net.is_offline(cfg)
+    add("network", "Network use", "ok" if offline or not cfg.online_hash_lookup else "info",
+        "offline mode - no network access" if offline else
+        ("online hash reputation is ON (file hashes are sent to the provider)" if cfg.online_hash_lookup
+         else "none (online lookups are off)"),
+        "" if offline or not cfg.online_hash_lookup else "Set 'offline true' if hashes must not leave this machine.")
+
+    log = audit.AuditLog(cfg)
+    verified = log.verify()
+    if not log.enabled:
+        add("audit", "Audit trail", "attention", "turned off", "warden config set audit_log true")
+    else:
+        add("audit", "Audit trail", "ok" if verified["ok"] else "attention",
+            f"{verified['entries']} entr(ies), chain " + ("intact" if verified["ok"] else "FAILED verification"),
+            "" if verified["ok"] else "Run 'warden audit verify' - the log was modified or damaged.")
+
+    add("retention", "Data retention", "info",
+        "history: " + (f"{cfg.history_retention_days} days" if cfg.history_retention_days else "kept indefinitely")
+        + "; quarantine: " + (f"{cfg.quarantine_retention_days} days" if cfg.quarantine_retention_days else "kept indefinitely"),
+        "" if cfg.history_retention_days else
+        "Saved reports list file paths. To limit how long they are kept: warden config set history_retention_days 90")
+
+    if sys.platform == "win32":
+        add("data_dir", "Data folder access", "info",
+            f"{cfg.data_dir} (protected by your Windows profile's permissions)", "")
+    else:
+        try:
+            mode = cfg.data_dir.stat().st_mode & 0o777
+            add("data_dir", "Data folder access", "ok" if mode & 0o077 == 0 else "attention",
+                f"{cfg.data_dir} mode {mode:03o}", "" if mode & 0o077 == 0 else f"chmod 700 {cfg.data_dir}")
+        except OSError:
+            add("data_dir", "Data folder access", "info", f"{cfg.data_dir} does not exist yet", "")
+
+    backend = _secrets.backend_name()
+    add("secrets", "Secret storage", "attention" if backend == "owner-only file" else "ok",
+        backend, "No OS keychain was found; secrets fall back to an owner-only file." if backend == "owner-only file" else "")
+
+    add("realtime", "Real-time protection", "info",
+        "Warden is on-demand only: it does not monitor files as they are opened or run",
+        "Keep your operating system's real-time antivirus enabled alongside Warden.")
+
+    return {
+        "generated": audit.now_iso(), "warden_version": __version__,
+        "host": audit._actor()["host"], "platform": sys.platform,
+        "attention": sum(1 for c in checks if c["status"] == "attention"),
+        "checks": checks,
+    }
+
+
+@app.command()
+def posture(
+    json_out: bool = typer.Option(False, "--json", help="Print machine-readable JSON (suitable as audit evidence)."),
+    strict: bool = typer.Option(False, "--strict", help="Exit with code 1 if any check needs attention."),
+):
+    """Summarize this installation's security-relevant state, with recommendations.
+
+    Covers engines and signature freshness, rule packs, recurring scans, the
+    most recent scan, quarantine encryption, network use, the audit trail, data
+    retention and secret storage. Useful as a quick health check, and as
+    evidence for a security review (see docs/COMPLIANCE.md).
+    """
+    rep = posture_report(Config.load())
+    if json_out:
+        typer.echo(_json.dumps(rep, indent=2))
+    else:
+        table = Table(title=f"Warden {rep['warden_version']} posture - {rep['host']}")
+        table.add_column("Check", style="bold")
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Detail", overflow="fold")
+        label = {"ok": "[green]OK[/]", "attention": "[yellow]ATTENTION[/]", "info": "[cyan]INFO[/]"}
+        for c in rep["checks"]:
+            detail = _esc(c["detail"]) + (f"\n[dim]-> {_esc(c['advice'])}[/]" if c["advice"] else "")
+            table.add_row(_esc(c["title"]), label.get(c["status"], _esc(c["status"])), detail)
+        console.print(table)
+        n = rep["attention"]
+        console.print(f"[yellow]{n} item(s) need attention.[/]" if n else "[green]Nothing needs attention.[/]")
+    raise typer.Exit(1 if strict and rep["attention"] else 0)
 
 
 def _launched_by_double_click() -> bool:

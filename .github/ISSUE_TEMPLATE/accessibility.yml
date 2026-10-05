@@ -1,0 +1,35 @@
+name: Accessibility problem
+description: Something in the dashboard or CLI is hard or impossible to use with your setup
+labels: ["accessibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you — reports from people who actually use assistive technology are
+        the one thing automated testing can't replace. Warden's current
+        conformance report is in
+        [docs/ACCESSIBILITY.md](https://github.com/ForrestLasiter/warden/blob/main/docs/ACCESSIBILITY.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What went wrong?
+      description: What you were trying to do, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: where
+    attributes:
+      label: Where?
+      description: Which part - e.g. "dashboard, Quarantine section" or "warden scan in a terminal".
+    validations:
+      required: true
+  - type: input
+    id: tech
+    attributes:
+      label: Assistive technology and browser
+      description: e.g. "NVDA 2026.1 with Firefox", "VoiceOver with Safari", "keyboard only", "400% zoom", "Windows High Contrast".
+  - type: input
+    id: version
+    attributes:
+      label: Warden version and operating system
+      description: Output of `warden version`, and your OS.

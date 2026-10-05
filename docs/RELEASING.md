@@ -16,7 +16,10 @@ For maintainers. A release is a version tag; everything else is automated by
        requirements-release.in -o requirements-release.txt
    pip-audit --require-hashes --disable-pip -r requirements-release.txt
    ```
-4. **Checks** — the same ones CI runs:
+4. **User interface changed?** Run the accessibility audit and regenerate the
+   README screenshots (`packaging/a11y_audit.py`, `packaging/make_screenshots.py`),
+   and update the version and date at the top of `docs/ACCESSIBILITY.md`.
+5. **Checks** — the same ones CI runs:
    ```bash
    pip install -e ".[dev]"
    ruff check .
@@ -26,7 +29,9 @@ For maintainers. A release is a version tag; everything else is automated by
    shellcheck scripts/*.sh
    pwsh -c "Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings scripts/PSScriptAnalyzerSettings.psd1"
    ```
-5. Merge to `main` through a pull request with CI green on every platform.
+6. **Rehearse the release build** on the branch (no publishing):
+   `gh workflow run release.yml --ref <branch>`, and wait for all five platforms.
+7. Merge to `main` through a pull request with CI green on every platform.
 
 `main` is protected by a repository ruleset: no direct pushes, no force pushes,
 no deletion, and any pull request touching a path in `.github/CODEOWNERS` (the
@@ -41,8 +46,8 @@ enforced for real. The rulesets live under *Settings → Rules → Rulesets*.
 
 ```bash
 git switch main && git pull
-git tag -a v0.5.1 -m "Warden 0.5.1"
-git push origin v0.5.1
+git tag -a v0.6.0 -m "Warden 0.6.0"
+git push origin v0.6.0
 ```
 
 Release tags (`v*`) are protected by a repository ruleset: they cannot be moved
@@ -71,6 +76,13 @@ To rehearse a release without publishing, run the workflow by hand on a branch:
 `gh workflow run release.yml --ref <branch>` builds and smoke-tests all five
 binaries and skips the publish job.
 
+Each binary also carries the **license notices** of everything bundled in it,
+generated during the build from that platform's installed packages
+(`warden licenses --full`). Bundling them is a condition of those licenses - if
+you add a dependency whose wheel ships no license file, add its text under
+`warden/licenses/<name>.txt` (see `yara-x.txt`); `tests/test_audit_compliance.py`
+fails if any shipped dependency has no license text.
+
 Each build installs dependencies with `pip install --require-hashes`, runs
 PyInstaller, and **smoke-tests the binary** (version, engine status, offline
 privacy report, key generation — which proves the crypto library is bundled —
@@ -81,8 +93,8 @@ is attested for every binary. All third-party Actions are pinned to commit SHAs.
 
 1. Verify the release as a user would:
    ```bash
-   gh release download v0.5.0 --dir /tmp/warden-0.5.0
-   scripts/verify-release.sh /tmp/warden-0.5.0
+   gh release download v0.6.0 --dir /tmp/warden-0.6.0
+   scripts/verify-release.sh /tmp/warden-0.6.0
    ```
    (see [VERIFY.md](VERIFY.md) for what it checks).
 2. Run each installer on a clean machine/VM if the installer changed:

@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, even with no commits: a vulnerability disclosed in a pinned
+  # dependency should fail pip-audit here rather than wait for the next change.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read

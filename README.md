@@ -11,6 +11,8 @@ No subscription. No telemetry. No lock-in.
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Latest release](https://img.shields.io/github/v/release/ForrestLasiter/warden?sort=semver)](https://github.com/ForrestLasiter/warden/releases)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ForrestLasiter/warden/badge)](https://scorecard.dev/viewer/?uri=github.com/ForrestLasiter/warden)
+[![WCAG 2.1 AA](https://img.shields.io/badge/accessibility-WCAG%202.1%20AA-blue.svg)](docs/ACCESSIBILITY.md)
 
 [**Download**](#download) · [**Quickstart**](#quickstart) · [**Dashboard**](#dashboard) · [**How it works**](#how-it-works) · [**Docs**](#documentation)
 
@@ -165,10 +167,18 @@ reported incomplete rather than clean.
 ## Dashboard
 
 `warden gui` opens a local dashboard for scans, sweeps, history, and quarantine —
-with live progress, a **Cancel** button, and one-click isolation. It targets
-**WCAG 2.1 AA** (self-assessed): keyboard navigation, visible focus, ARIA roles
-and live regions, `prefers-reduced-motion`, and a **light / dark / system** theme
-toggle. No Electron, no dependencies beyond the Python standard library.
+with live progress, a **Cancel** button, and one-click isolation. No Electron, no
+dependencies beyond the Python standard library.
+
+**Accessible.** The dashboard conforms to **WCAG 2.1 AA** — the standard behind
+the ADA, Section 508 and EN 301 549 — in both its light and dark themes: full
+keyboard operation, visible focus, screen-reader names and announcements, 4.5:1
+text contrast, reflow to 320 px / 400 % zoom, reduced-motion and Windows High
+Contrast support. It was audited with axe-core and scripted keyboard, contrast
+and reflow checks (0 violations), and the contrast rules run in CI. That is a
+self-assessment, not testing by assistive-technology users — the method, the
+full criterion table and the limits are in
+[docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
 
 **It is local-only.** The server binds to `127.0.0.1` and refuses any other
 address; other devices on your network cannot reach it. It validates the `Host`
@@ -222,8 +232,12 @@ warden rules list                     # signed rule packs: install / verify / ro
 warden rules install acme-core-12.wrp
 warden rules rollback acme-core
 
+warden audit show                     # what Warden did, when, as which user
+warden audit verify                   # has the audit trail been edited?
+warden posture                        # security-relevant state + recommendations
 warden status                         # engines, signature freshness, network state
 warden privacy                        # what is stored locally, what can be sent
+warden licenses                       # licenses of Warden and the software it bundles
 warden config show                    # view settings (secrets masked)
 warden config set-vt-key              # store a VirusTotal API key (hidden prompt)
 warden config set offline true        # change any setting
@@ -257,6 +271,8 @@ was covered so far (exit `2`).
 | `max_scan_bytes` | 100 MB | Largest file read for content scanning |
 | `quarantine_encryption` | `false` | Seal newly quarantined files with AES-256-GCM |
 | `quarantine_retention_days` | `0` | Age used by `quarantine purge --expired` |
+| `history_retention_days` | `0` | Delete saved reports older than this, automatically (`0` = keep) |
+| `audit_log` | `true` | Keep the audit trail (`warden audit`) |
 
 ## How it works
 
@@ -288,6 +304,10 @@ report. The same core powers the CLI, the sweep, the scheduler, and the dashboar
   no shell, and file names are never interpolated into commands.
 - **Local-first.** Nothing leaves your machine unless you opt into online
   reputation (off by default). `--offline` makes that a guarantee.
+- **Accountable.** Scans, quarantine actions, setting changes and rule changes
+  are written to a hash-chained audit trail with the time and OS user.
+  `warden audit verify` detects edits; `warden posture` summarizes the state a
+  security review asks about.
 
 ## Privacy
 
@@ -301,8 +321,13 @@ What stays on your computer, in `~/.warden`:
   names — look a report over before sharing it.
 - **Quarantine keeps a copy of each isolated file** together with its original
   path, hash and findings.
+- **The audit trail records what Warden did** — scans run, files quarantined,
+  restored or deleted, settings changed — with the time, your OS user name, the
+  computer name and the paths involved. It never leaves the machine, and you can
+  turn it off (`warden config set audit_log false`).
 - A cache of hashes you looked up online, your settings, and your schedules.
 
+Set `history_retention_days` to have old reports removed automatically.
 `warden privacy` shows all of this for your installation, and how to erase it.
 Full details: [docs/PRIVACY.md](docs/PRIVACY.md).
 
@@ -371,6 +396,11 @@ Stated plainly, so you can decide what to rely on:
 - **Malware already running as you can defeat any user-space scanner**, Warden
   included.
 - **Binaries are not code-signed** (no paid certificates) — verify them instead.
+- **No certifications.** Warden is not SOC 2, ISO 27001, HIPAA, PCI DSS or FIPS
+  certified (those assess organisations or validated modules, not a free tool),
+  has never been through AV-TEST / AV-Comparatives style testing, and claims no
+  detection rate. What it *does* provide toward those programmes — and what you
+  must supply yourself — is in [docs/COMPLIANCE.md](docs/COMPLIANCE.md).
 
 The full analysis is in the [threat model](docs/THREAT_MODEL.md).
 
@@ -415,6 +445,8 @@ Windows x64, Linux x64/ARM64 and macOS x64/ARM64) or a Rust toolchain to build i
 | | |
 | --- | --- |
 | [Threat model](docs/THREAT_MODEL.md) | What Warden defends against, how, and what it doesn't |
+| [Compliance](docs/COMPLIANCE.md) | Which standards apply to Warden, and how it maps to SOC 2, ISO 27001, HIPAA, PCI DSS controls |
+| [Accessibility](docs/ACCESSIBILITY.md) | WCAG 2.1 AA conformance report (ADA / Section 508) |
 | [Privacy](docs/PRIVACY.md) | What is stored, what can be sent, how to erase it |
 | [Verifying a release](docs/VERIFY.md) | Checksums, Sigstore signature, build provenance, SBOM |
 | [Rule packs](docs/RULE_PACKS.md) | Building, signing, installing and rolling back detection content |
@@ -433,3 +465,8 @@ rules under `warden/rules/` are especially valuable. Please read the
 
 [MIT](LICENSE). Warden bundles no third-party signatures; ClamAV and any rule
 packs you add carry their own licenses.
+
+The release binaries include third-party open-source software (the Python
+runtime, YARA-X and supporting libraries) under BSD, MIT, Apache-2.0, MPL-2.0,
+PSF and ISC licenses. Their notices ship inside every binary: `warden licenses`
+lists them and `warden licenses --full` prints the texts.

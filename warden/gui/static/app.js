@@ -46,9 +46,39 @@ let toastTimer = null;
 function toast(msg, kind = "") {
   const t = $("#toast");
   t.textContent = msg; t.className = "toast" + (kind ? " " + kind : ""); t.hidden = false;
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+  // Errors stay up longer - and are ALSO shown inline next to the form, where
+  // they persist, so nothing important lives only in a message that vanishes.
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, kind === "error" ? 12000 : 6000);
+}
+/* A persistent error tied to a form (SC 3.3.1 / 4.1.3). Pass null to clear. */
+function formError(box, message, input) {
+  box.textContent = "";
+  box.hidden = !message;
+  if (input) {
+    if (message) { input.setAttribute("aria-invalid", "true"); input.setAttribute("aria-errormessage", box.id); }
+    else { input.removeAttribute("aria-invalid"); input.removeAttribute("aria-errormessage"); }
+  }
+  if (message) box.append(el("strong", { text: "Problem: " }), message);
+}
+/* Screen-reader progress, at most one announcement every few seconds. */
+let srLast = 0;
+function srAnnounce(message, force) {
+  const now = Date.now();
+  if (!force && now - srLast < 6000) return;
+  srLast = now;
+  $("#srStatus").textContent = message;
+}
+/* A table that may be wider than a narrow screen scrolls inside its own
+   focusable region, so keyboard users can reach the hidden columns. */
+function tableRegion(table, label) {
+  return el("div", { class: "table-wrap", role: "region", "aria-label": label, tabindex: "0" }, table);
 }
 const badge = (i) => el("span", { class: "badge badge-" + SEV_CLASS[i] }, SEV[i]);
+/* Outcome of a whole scan, for lists of past scans. A scan with no threats is
+   only "Clean" if it also covered everything; a severity word is not used here
+   because a past report's summary records how many threats, not how severe. */
+const outcomeBadge = (e) => e.threats ? pill("high", e.threats === 1 ? "1 threat" : `${e.threats} threats`)
+  : e.complete === false ? pill("medium", "Incomplete") : pill("clean", "Clean");
 const pill = (cls, text) => el("span", { class: "badge badge-" + cls }, text);
 const fmtTime = (s) => (s || "").replace("T", " ").slice(0, 16);
 
@@ -72,6 +102,7 @@ function selectTab(tab, focusInput) {
   });
   const key = tab.id.replace("tab-", "");
   $("#pageTitle").textContent = TITLES[key] || "Warden";
+  document.title = `${TITLES[key] || "Warden"} — Warden`;
   if (key === "overview") loadOverview();
   if (key === "history") loadHistory();
   if (key === "quarantine") loadQuarantine();
@@ -128,7 +159,7 @@ function statCard(icon, num, sub, label, tone) {
   const number = el("div", { class: "stat-num" }, String(num));
   if (sub) number.append(" ", el("small", { text: sub }));
   return el("div", { class: "stat" },
-    el("div", { class: "stat-ico " + (tone || ""), html: ICON[icon] }),
+    el("div", { class: "stat-ico " + (tone || ""), html: ICON[icon], "aria-hidden": "true" }),
     el("div", {}, number, el("div", { class: "stat-label", text: label })));
 }
 
@@ -165,7 +196,7 @@ async function loadOverview() {
     } else {
       entries.slice(0, 6).forEach((e) => {
         recent.append(el("div", { class: "recent-item" },
-          badge(e.threats ? 5 : 0),
+          outcomeBadge(e),
           el("div", { class: "ri-main" },
             el("div", { text: `${e.kind === "sweep" ? "System sweep" : "Scan"} — ${e.files_scanned} files` }),
             el("div", { class: "ri-target", text: e.root })),
@@ -203,11 +234,15 @@ function coverageNotes(report) {
 
 function renderSummary(report) {
   const state = reportState(report);
-  const head = state === "threats" ? [badge(5), `${report.threats} threat(s) found`]
+  // The badge shows the WORST verdict actually found, not a fixed "Critical".
+  const worst = Math.max(3, ...report.results.map((r) => r.verdict || 0));
+  const head = state === "threats" ? [badge(Math.min(worst, 5)), `${report.threats} threat(s) found`]
     : state === "incomplete" ? [pill("medium", "Incomplete"), "Scan incomplete — not everything could be checked"]
     : [badge(0), "No threats found"];
   const cov = report.coverage || {};
-  const card = el("div", { class: "summary-card " + state },
+  // tabindex -1: focus is moved here when a scan finishes, so keyboard and
+  // screen-reader users land on the outcome instead of hunting for it.
+  const card = el("div", { class: "summary-card " + state, tabindex: "-1", role: "group", "aria-label": "Scan result" },
     el("div", { class: "sc-head" }, head[0], el("span", { text: head[1] })),
     el("div", { class: "summary-grid" },
       el("span", {}, el("strong", { text: String(report.files_scanned) }), " scanned"),
@@ -272,7 +307,7 @@ function renderResultItem(r, jobId, index) {
   }
   if (r.verdict >= 3 && jobId != null && index != null) {
     box.append(el("div", { class: "finding" },
-      el("button", { class: "btn btn-danger btn-small", type: "button",
+      el("button", { class: "btn btn-danger btn-small", type: "button", "aria-label": `Quarantine this file: ${r.path}`,
         onclick: (e) => { e.stopPropagation(); quarantineResult(jobId, index, e.currentTarget); } }, "Quarantine this file")));
   }
   item.append(head, box);
@@ -305,10 +340,12 @@ function announce(report, noun) {
 /* ---------- jobs ---------- */
 function progressBlock(wrap, label) {
   wrap.hidden = false; wrap.textContent = "";
-  const cancel = el("button", { class: "btn btn-small", type: "button", disabled: "" }, "Cancel");
-  wrap.append(el("div", { class: "progress-line", role: "status", "aria-live": "polite" },
+  const cancel = el("button", { class: "btn btn-small", type: "button", disabled: "" }, "Cancel scan");
+  // The visible counter is NOT a live region; srAnnounce() speaks a throttled copy.
+  wrap.append(el("div", { class: "progress-line" },
     el("div", { class: "spinner", "aria-hidden": "true" }),
     el("span", { class: "progress-text", text: label })), cancel);
+  srAnnounce(label, true);
   return { text: $(".progress-text", wrap), cancel };
 }
 function armCancel(button, jobId, text) {
@@ -316,6 +353,7 @@ function armCancel(button, jobId, text) {
   button.addEventListener("click", async () => {
     button.disabled = true;
     text.textContent = "Stopping after the current file…";
+    srAnnounce("Stopping the scan after the current file.", true);
     try { await api(`/api/job/${jobId}/cancel`, { method: "POST" }); }
     catch (_) { /* already finished - the next poll will show the result */ }
   });
@@ -335,8 +373,15 @@ async function pollJob(jobId, onProgress) {
   });
 }
 
-async function runJob({ button, progress, startLabel, endpoint, payload, onDone, noun }) {
+const ERROR_HINTS = {
+  "path not found": "Check that the file or folder exists and that the path is typed in full, for example C:\\Users\\you\\Downloads or /home/you/Downloads.",
+  "too many concurrent scans": "Wait for a running scan to finish, or cancel it, then try again.",
+  "invalid min_severity": "Choose a report level from the list.",
+};
+
+async function runJob({ button, progress, startLabel, endpoint, payload, onDone, noun, errorBox, input, results }) {
   button.disabled = true;
+  formError(errorBox, null, input);
   const ui = progressBlock(progress, startLabel);
   let stopping = false;
   ui.cancel.addEventListener("click", () => { stopping = true; });
@@ -344,13 +389,26 @@ async function runJob({ button, progress, startLabel, endpoint, payload, onDone,
     const { job } = await api(endpoint, { method: "POST", body: JSON.stringify(payload) });
     armCancel(ui.cancel, job, ui.text);
     const done = await pollJob(job, (j) => {
-      if (!stopping) ui.text.textContent = `Scanning… ${j.count} files, ${j.threats} flagged`;
+      if (stopping) return;
+      const line = `Scanning… ${j.count} files, ${j.threats} flagged`;
+      ui.text.textContent = line;
+      srAnnounce(line);
     });
     progress.hidden = true;
     onDone(done, job);
     statusCache = null;
     announce(done.report, noun);
-  } catch (err) { progress.hidden = true; toast(`${noun} failed: ${err.message}`, "error"); }
+    const summary = $(".summary-card", results);
+    if (summary) summary.focus();
+  } catch (err) {
+    progress.hidden = true;
+    // Say what went wrong AND what to do about it (SC 3.3.3).
+    const hint = ERROR_HINTS[err.message] || "";
+    const message = `${noun} could not run: ${err.message}.${hint ? " " + hint : ""}`;
+    formError(errorBox, message, err.status === 400 ? input : null);
+    toast(message, "error");
+    (input || button).focus();
+  }
   finally { button.disabled = false; }
 }
 
@@ -361,6 +419,7 @@ $("#scanForm").addEventListener("submit", (e) => {
   const level = $("#scanSeverity").value;
   runJob({
     button: $("#scanBtn"), progress: $("#scanProgress"), startLabel: "Starting scan…", noun: "Scan",
+    errorBox: $("#scanError"), input: $("#scanPath"), results: $("#scanResults"),
     endpoint: "/api/scan",
     payload: { path, min_severity: level, save: true, online: $("#scanOnline").checked },
     onDone: (done, job) => renderResults($("#scanResults"), done.report, job, SEV_INDEX[level] || 3),
@@ -372,14 +431,17 @@ $("#sweepForm").addEventListener("submit", (e) => {
   $("#sweepResults").textContent = ""; $("#sweepCategories").textContent = "";
   runJob({
     button: $("#sweepBtn"), progress: $("#sweepProgress"), startLabel: "Gathering targets…", noun: "Sweep",
+    errorBox: $("#sweepError"), input: null, results: $("#sweepResults"),
     endpoint: "/api/sweep",
     payload: { quick: $("#sweepQuick").checked, save: true, online: $("#sweepOnline").checked },
     onDone: (done, job) => {
       if (done.categories) {
         const box = $("#sweepCategories");
-        done.categories.forEach((c) => box.append(el("div", { class: "stat", title: c.description },
-          el("div", { class: "stat-ico", html: ICON.scan }),
-          el("div", {}, el("div", { class: "stat-num", text: String(c.files) }), el("div", { class: "stat-label", text: c.name })))));
+        done.categories.forEach((c) => box.append(el("div", { class: "stat" },
+          el("div", { class: "stat-ico", html: ICON.scan, "aria-hidden": "true" }),
+          el("div", {}, el("div", { class: "stat-num", text: String(c.files) }),
+            el("div", { class: "stat-label", text: c.name }),
+            el("div", { class: "stat-desc", text: c.description })))));
       }
       renderResults($("#sweepResults"), done.report, job);
     },
@@ -389,7 +451,7 @@ $("#sweepForm").addEventListener("submit", (e) => {
 async function quarantineResult(jobId, index, button) {
   try {
     await api("/api/quarantine/add", { method: "POST", body: JSON.stringify({ job: jobId, index }) });
-    if (button) { button.disabled = true; button.textContent = "Quarantined"; }
+    if (button) { button.disabled = true; button.textContent = "Quarantined"; button.setAttribute("aria-label", "Quarantined"); }
     toast("File quarantined and isolated", "success");
   } catch (err) { toast("Quarantine failed: " + err.message, "error"); }
 }
@@ -403,16 +465,16 @@ async function loadHistory() {
     if (!entries.length) { box.append(el("p", { class: "empty", html: ICON.empty }, "No saved scans yet.")); return; }
     const table = el("table", {},
       el("caption", { text: "Past scans and sweeps, most recent first." }),
-      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When (UTC)" }), el("th", { scope: "col", text: "Kind" }), el("th", { scope: "col", text: "Target" }), el("th", { scope: "col", text: "Files" }), el("th", { scope: "col", text: "Threats" }))));
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When (UTC)" }), el("th", { scope: "col", text: "Kind" }), el("th", { scope: "col", text: "Target" }), el("th", { scope: "col", text: "Files" }), el("th", { scope: "col", text: "Result" }))));
     const tb = el("tbody");
     entries.forEach((e) => tb.append(el("tr", {},
       el("td", { text: fmtTime(e.when).replace(" ", " · ") }),
       el("td", { text: e.kind }),
       el("td", { text: e.root }),
       el("td", { text: String(e.files_scanned) }),
-      el("td", {}, e.threats ? el("span", {}, badge(5), ` ${e.threats}`) : el("span", { text: "0" })))));
-    table.append(tb); box.append(table);
-  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", text: "Could not load history." })); }
+      el("td", {}, outcomeBadge(e)))));
+    table.append(tb); box.append(tableRegion(table, "Scan history table"));
+  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", role: "alert", text: "Could not load history." })); }
 }
 
 /* ---------- quarantine ---------- */
@@ -434,11 +496,12 @@ async function loadQuarantine() {
         el("td", {}, badge(si < 0 ? 4 : si)),
         el("td", { text: e.original_path }),
         el("td", {}, el("div", { class: "row-actions" },
-          el("button", { class: "btn btn-small", type: "button", onclick: () => restoreEntry(e.id, e.original_path) }, "Restore"),
-          el("button", { class: "btn btn-danger btn-small", type: "button", onclick: () => confirmDelete(e.id, e.original_path) }, "Delete")))));
+          // Each row's buttons name the file they act on (SC 2.4.6 / 4.1.2).
+          el("button", { class: "btn btn-small", type: "button", "aria-label": `Restore ${e.original_path}`, onclick: () => restoreEntry(e.id, e.original_path) }, "Restore"),
+          el("button", { class: "btn btn-danger btn-small", type: "button", "aria-label": `Delete ${e.original_path} permanently`, onclick: () => confirmDelete(e.id, e.original_path) }, "Delete")))));
     });
-    table.append(tb); box.append(table);
-  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", text: "Could not load quarantine." })); }
+    table.append(tb); box.append(tableRegion(table, "Quarantined files table"));
+  } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", role: "alert", text: "Could not load quarantine." })); }
 }
 
 /* Restore re-scans first. If the file is still detected, the server answers 409
@@ -472,11 +535,17 @@ function openConfirm({ title, body, okLabel, onOk }) {
   pendingOk = onOk;
   modalOpener = document.activeElement;
   backdrop.hidden = false;
+  // Take the page behind the dialog out of the tab order and the
+  // accessibility tree while it is open.
+  $(".app").inert = true;
+  $(".skip-link").inert = true;
   $("#confirmCancel").focus();
   document.addEventListener("keydown", modalKeydown);
 }
 function closeModal() {
   backdrop.hidden = true; document.removeEventListener("keydown", modalKeydown);
+  $(".app").inert = false;
+  $(".skip-link").inert = false;
   if (modalOpener && modalOpener.focus) modalOpener.focus();
   pendingOk = null;
 }
@@ -512,6 +581,7 @@ $("#quitBtn").addEventListener("click", () => {
     onOk: async () => {
       try { await api("/api/shutdown", { method: "POST" }); } catch (_) { /* the server is going away */ }
       $(".app").hidden = true;
+      $(".skip-link").hidden = true;
       const stopped = $("#stoppedScreen");
       stopped.hidden = false;
       $("#stoppedTitle").focus();

@@ -40,8 +40,22 @@ hiddenimports += _yx_hidden
 # Warden's own package data: YARA rules and the dashboard's static files.
 datas += collect_data_files(
     "warden",
-    includes=["rules/*.yar", "rules/*.yara", "gui/static/*"],
+    includes=["rules/*.yar", "rules/*.yara", "gui/static/*", "licenses/*.txt"],
 )
+
+# Third-party license notices for exactly what is being bundled on this
+# platform. The licenses of the bundled software (BSD, MIT, Apache-2.0, MPL-2.0,
+# PSF) require their notices to accompany a binary; `warden licenses` prints
+# this file. Generated here, from the build environment's installed packages.
+sys.path.insert(0, REPO_ROOT)
+from warden.notices import notices_text  # noqa: E402
+
+_notices_dir = os.path.join(REPO_ROOT, "build", "notices")
+os.makedirs(_notices_dir, exist_ok=True)
+_notices_path = os.path.join(_notices_dir, "THIRD_PARTY_NOTICES.txt")
+with open(_notices_path, "w", encoding="utf-8") as _fh:
+    _fh.write(notices_text(frozen=True))
+datas += [(_notices_path, "warden")]
 
 # typer/rich/click are pure-python but pull a few lazy imports.
 hiddenimports += ["warden", "warden.gui", "warden.gui.server"]
