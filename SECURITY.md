@@ -39,6 +39,9 @@ to break any of them is a vulnerability. In particular:
   pack writing outside its directory, or an altered installed pack being loaded.
 - **Privacy.** Any network request made without the user opting in, anything
   beyond a hash being sent, or a request made while offline mode is on.
+- **Audit trail.** A secret or file content written to the audit log; an edit,
+  removal or reordering of entries that `warden audit verify` does not detect
+  (rewriting the entire chain is a documented limit, not a vulnerability).
 - **Releases and installers.** A way to make an installer accept a binary that
   does not match the published checksum, or a weakness in the release pipeline.
 
@@ -69,9 +72,15 @@ Intel) with Python 3.10–3.14:
 
 - the test suite, including property-based fuzz tests of every parser and every
   state-file loader, with a coverage floor;
-- `ruff`, `mypy` (for all three target platforms), `bandit`;
-- `pip-audit` against the hash-locked release dependencies;
-- `ShellCheck` and `PSScriptAnalyzer` on the installers.
+- `ruff`, `mypy` (for all three target platforms), `bandit`, and CodeQL
+  (Python, the dashboard's JavaScript, and the workflows);
+- `pip-audit` against the hash-locked release dependencies - also weekly, so a
+  newly disclosed vulnerability in a pinned dependency is caught without a commit;
+- `ShellCheck` and `PSScriptAnalyzer` on the installers;
+- accessibility rules for the dashboard (colour contrast in both themes, markup).
+
+The repository's supply-chain practices are scored publicly by the
+[OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/ForrestLasiter/warden).
 
 Releases are built from hash-pinned dependencies by SHA-pinned GitHub Actions,
 and ship with `SHA256SUMS`, a Sigstore signature, SLSA build provenance and

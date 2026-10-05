@@ -58,9 +58,18 @@ pytest -q --cov
 
 ## Accessibility
 
-The dashboard targets **WCAG 2.1 AA**. If you touch the UI, preserve keyboard
-navigation, focus visibility, ARIA roles/live-regions, color contrast in both
-themes, and `prefers-reduced-motion`. The page runs under a strict
+The dashboard conforms to **WCAG 2.1 AA** ([docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md)).
+If you touch the UI, preserve keyboard navigation, focus visibility, ARIA
+roles/live-regions, color contrast in **both** themes, and
+`prefers-reduced-motion`.
+
+- `pytest tests/test_accessibility.py` recomputes every colour pair from
+  `style.css` for both themes. If you add a colour combination, add it to the
+  pair list there. Use the `--*-solid` tokens for filled controls with white
+  text; the plain `--accent` / `--danger` are for text and icons.
+- Before a UI change is merged, run the browser audit
+  (`python packaging/a11y_audit.py <axe.min.js>`) - it must report 0 violations.
+- Never put important information only in the toast; it disappears. The page runs under a strict
 Content-Security-Policy: no inline scripts, styles or event handlers, and
 untrusted text goes in with `textContent`, never `innerHTML`.
 

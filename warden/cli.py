@@ -1,12 +1,23 @@
 """Warden command-line interface.
 
-    warden status                 show which engines are active
+    warden gui                    open the local dashboard
     warden scan <path>            scan a file or folder on demand
-    warden scan <path> --quarantine   isolate anything flagged (asks first)
-    warden quarantine list        show quarantined items
-    warden quarantine restore ID  put a file back
-    warden quarantine delete ID   permanently remove (confirms)
-    warden update-rules           info on adding rules/signatures
+    warden sweep                  scan where malware persists and hides
+    warden inspect <file>         describe a file (hashes, format, signature)
+    warden lookup <file|hash>     online hash reputation (opt-in)
+    warden quarantine ...         list / restore / rescan / delete / purge / export / import
+    warden history ...            list / show / prune saved reports
+    warden schedule ...           add / list / doctor / test / remove recurring scans
+    warden rules ...              signed rule packs: install / verify / rollback ...
+    warden audit ...              show / verify / export / prune the audit trail
+    warden config ...             view and change settings
+    warden status                 engines, signature freshness, network state
+    warden posture                security-relevant state, with recommendations
+    warden privacy                what is stored locally and what can be sent
+    warden licenses               licenses of Warden and bundled software
+
+`--offline` before any command guarantees no network use. Exit codes of scan and
+sweep: 0 clean, 1 threats found, 2 incomplete (never treat 2 as clean).
 """
 
 from __future__ import annotations
