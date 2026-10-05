@@ -24,6 +24,11 @@ def _text(value: Any, default: str) -> str:
     return value if isinstance(value, str) else default
 
 
+def _complete(data: dict[str, Any]) -> bool:
+    coverage = data.get("coverage")
+    return not (isinstance(coverage, dict) and coverage.get("complete") is False)
+
+
 def _count(value: Any) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
@@ -37,11 +42,16 @@ class HistoryEntry:
     files_scanned: int
     threats: int
     path: str          # on-disk json path
+    # False when the scan could not cover everything (unreadable paths, engine
+    # errors, cancelled...). A report with no threats is only "clean" if this
+    # is True; reports written before the field existed are taken as complete.
+    complete: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id, "kind": self.kind, "when": self.when, "root": self.root,
-            "files_scanned": self.files_scanned, "threats": self.threats, "path": self.path,
+            "files_scanned": self.files_scanned, "threats": self.threats,
+            "complete": self.complete, "path": self.path,
         }
 
 
@@ -67,7 +77,7 @@ class History:
         return HistoryEntry(
             id=entry_id, kind=kind, when=report.finished or report.started,
             root=report.root, files_scanned=report.files_scanned,
-            threats=len(report.threats), path=str(out),
+            threats=len(report.threats), complete=report.coverage_complete, path=str(out),
         )
 
     def list(self, limit: int | None = None) -> list[HistoryEntry]:
@@ -88,6 +98,7 @@ class History:
                 root=_text(data.get("root"), "?"),
                 files_scanned=_count(data.get("files_scanned")),
                 threats=_count(data.get("threats")),
+                complete=_complete(data),
                 path=str(fp),
             ))
             if limit and len(entries) >= limit:

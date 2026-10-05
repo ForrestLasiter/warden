@@ -1110,10 +1110,11 @@ def history_list(
     table.add_column("Kind")
     table.add_column("When (UTC)")
     table.add_column("Files", justify="right")
-    table.add_column("Threats", justify="right")
+    table.add_column("Threats", justify="right", no_wrap=True)
     table.add_column("Target")
     for e in entries:
-        threat_cell = f"[red]{e.threats}[/]" if e.threats else "0"
+        threat_cell = (f"[red]{e.threats}[/]" if e.threats
+                       else ("0" if e.complete else "[yellow]0 (incomplete)[/]"))
         table.add_row(_esc(e.id), _esc(e.kind), _esc(e.when.replace("T", " ")[:19]),
                       str(e.files_scanned), threat_cell, _esc(e.root))
     console.print(table)

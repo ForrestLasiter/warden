@@ -552,3 +552,31 @@ def test_scan_output_survives_a_non_unicode_stream(tmp_path, encoding):
     assert proc.returncode == 1, proc.stderr.decode("ascii", "replace")[-800:]
     assert b"UnicodeEncodeError" not in proc.stderr and b"Traceback" not in proc.stderr
     assert b"THREATS FOUND" in proc.stdout
+
+
+# -- history: a scan with gaps is not listed as clean -------------------
+def test_history_entries_carry_completeness(tmp_path):
+    cfg = _cfg(tmp_path)
+    h = History(cfg)
+    clean = ScanReport(root="/a")
+    gaps = ScanReport(root="/b", unreadable=["/b/locked (Permission denied)"])
+    assert h.save(clean).complete is True
+    assert h.save(gaps).complete is False
+    by_root = {e.root: e for e in h.list()}
+    assert by_root["/a"].complete is True and by_root["/b"].complete is False
+    assert by_root["/b"].to_dict()["complete"] is False
+    # A report from before the field existed is treated as complete.
+    (h.dir / "20200101T000000000000Z_scan.json").write_text('{"root": "/old", "threats": 0}', encoding="utf-8")
+    assert {e.root: e.complete for e in h.list()}["/old"] is True
+
+
+def test_history_list_cli_marks_incomplete_scans(home, tmp_path):
+    History().save(ScanReport(root="/b", unreadable=["/b/x (Permission denied)"]))
+    res = runner.invoke(app, ["history", "list"])
+    assert res.exit_code == 0 and "incomplete" in res.output
+
+
+def test_dashboard_never_labels_every_threat_critical():
+    js = (Path(__file__).resolve().parent.parent / "warden" / "gui" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "badge(5)" not in js                       # no hard-coded "Critical"
+    assert "outcomeBadge(e)" in js and '"Incomplete"' in js

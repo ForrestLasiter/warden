@@ -74,6 +74,11 @@ function tableRegion(table, label) {
   return el("div", { class: "table-wrap", role: "region", "aria-label": label, tabindex: "0" }, table);
 }
 const badge = (i) => el("span", { class: "badge badge-" + SEV_CLASS[i] }, SEV[i]);
+/* Outcome of a whole scan, for lists of past scans. A scan with no threats is
+   only "Clean" if it also covered everything; a severity word is not used here
+   because a past report's summary records how many threats, not how severe. */
+const outcomeBadge = (e) => e.threats ? pill("high", e.threats === 1 ? "1 threat" : `${e.threats} threats`)
+  : e.complete === false ? pill("medium", "Incomplete") : pill("clean", "Clean");
 const pill = (cls, text) => el("span", { class: "badge badge-" + cls }, text);
 const fmtTime = (s) => (s || "").replace("T", " ").slice(0, 16);
 
@@ -191,7 +196,7 @@ async function loadOverview() {
     } else {
       entries.slice(0, 6).forEach((e) => {
         recent.append(el("div", { class: "recent-item" },
-          badge(e.threats ? 5 : 0),
+          outcomeBadge(e),
           el("div", { class: "ri-main" },
             el("div", { text: `${e.kind === "sweep" ? "System sweep" : "Scan"} — ${e.files_scanned} files` }),
             el("div", { class: "ri-target", text: e.root })),
@@ -229,7 +234,9 @@ function coverageNotes(report) {
 
 function renderSummary(report) {
   const state = reportState(report);
-  const head = state === "threats" ? [badge(5), `${report.threats} threat(s) found`]
+  // The badge shows the WORST verdict actually found, not a fixed "Critical".
+  const worst = Math.max(3, ...report.results.map((r) => r.verdict || 0));
+  const head = state === "threats" ? [badge(Math.min(worst, 5)), `${report.threats} threat(s) found`]
     : state === "incomplete" ? [pill("medium", "Incomplete"), "Scan incomplete — not everything could be checked"]
     : [badge(0), "No threats found"];
   const cov = report.coverage || {};
@@ -366,6 +373,12 @@ async function pollJob(jobId, onProgress) {
   });
 }
 
+const ERROR_HINTS = {
+  "path not found": "Check that the file or folder exists and that the path is typed in full, for example C:\\Users\\you\\Downloads or /home/you/Downloads.",
+  "too many concurrent scans": "Wait for a running scan to finish, or cancel it, then try again.",
+  "invalid min_severity": "Choose a report level from the list.",
+};
+
 async function runJob({ button, progress, startLabel, endpoint, payload, onDone, noun, errorBox, input, results }) {
   button.disabled = true;
   formError(errorBox, null, input);
@@ -389,7 +402,9 @@ async function runJob({ button, progress, startLabel, endpoint, payload, onDone,
     if (summary) summary.focus();
   } catch (err) {
     progress.hidden = true;
-    const message = `${noun} could not run: ${err.message}.`;
+    // Say what went wrong AND what to do about it (SC 3.3.3).
+    const hint = ERROR_HINTS[err.message] || "";
+    const message = `${noun} could not run: ${err.message}.${hint ? " " + hint : ""}`;
     formError(errorBox, message, err.status === 400 ? input : null);
     toast(message, "error");
     (input || button).focus();
@@ -450,14 +465,14 @@ async function loadHistory() {
     if (!entries.length) { box.append(el("p", { class: "empty", html: ICON.empty }, "No saved scans yet.")); return; }
     const table = el("table", {},
       el("caption", { text: "Past scans and sweeps, most recent first." }),
-      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When (UTC)" }), el("th", { scope: "col", text: "Kind" }), el("th", { scope: "col", text: "Target" }), el("th", { scope: "col", text: "Files" }), el("th", { scope: "col", text: "Threats" }))));
+      el("thead", {}, el("tr", {}, el("th", { scope: "col", text: "When (UTC)" }), el("th", { scope: "col", text: "Kind" }), el("th", { scope: "col", text: "Target" }), el("th", { scope: "col", text: "Files" }), el("th", { scope: "col", text: "Result" }))));
     const tb = el("tbody");
     entries.forEach((e) => tb.append(el("tr", {},
       el("td", { text: fmtTime(e.when).replace(" ", " · ") }),
       el("td", { text: e.kind }),
       el("td", { text: e.root }),
       el("td", { text: String(e.files_scanned) }),
-      el("td", {}, e.threats ? el("span", {}, badge(5), ` ${e.threats}`) : el("span", { text: "0" })))));
+      el("td", {}, outcomeBadge(e)))));
     table.append(tb); box.append(tableRegion(table, "Scan history table"));
   } catch (err) { box.textContent = ""; box.append(el("p", { class: "empty", role: "alert", text: "Could not load history." })); }
 }

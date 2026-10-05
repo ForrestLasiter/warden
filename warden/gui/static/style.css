@@ -207,7 +207,7 @@ main { flex: 1; width: 100%; max-width: 1080px; padding: 28px 32px 48px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field-grow { flex: 1 1 300px; }
 .field-end { align-self: flex-end; }
-.field-check { flex-direction: row; align-items: center; gap: 8px; }
+.field-check { display: flex; flex-direction: row; align-items: center; gap: 10px; }
 .field label { font-size: .82rem; font-weight: 600; }
 input[type="text"], select {
   padding: 10px 12px; border: 1px solid var(--control-border); border-radius: var(--radius-sm);
